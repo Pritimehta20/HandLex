@@ -1,0 +1,27 @@
+# Node
+node_modules/
+
+# Python
+venv/
+sign2text/venv/
+__pycache__/
+*.pyc
+
+# Environment files
+.env
+Backend/.env
+frontend/.env
+signaling-server/.env
+
+# Build output
+dist/
+build/
+frontend/dist/
+
+# OS & editor
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
