@@ -2,9 +2,13 @@
 import React, { useState } from "react";
 import SummaryApi, { baseUrl } from "../Common/SummaryApi";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../Provider/AuthContext";
+import { GoogleLogin } from '@react-oauth/google';  // 👈 ADD THIS
+
 
 const Login = () => {
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const [formData, setFormData] = useState({
     email: "",
@@ -65,17 +69,15 @@ const Login = () => {
       } else {
         setMessage(data.message || "Login successful");
 
+        // Use AuthContext to store token and user
         if (data.token) {
-          localStorage.setItem("authToken", data.token);
-        }
-        if (data.userId || data.user) {
-          const userData =
-            data.user || {
-              name: data.name,
-              email: data.email,
-              userId: data.userId,
-            };
-          localStorage.setItem("user", JSON.stringify(userData));
+          login(data.token, {
+            userId: data.userId,
+            name: data.name,
+            email: data.email,
+            isAdmin: data.isAdmin || false,
+            preferredLanguage: data.preferredLanguage
+          });
         }
 
         navigate("/dashboard", { replace: true });
@@ -86,6 +88,45 @@ const Login = () => {
       setLoading(false);
     }
   };
+  const handleGoogleSuccess = async (credentialResponse) => {
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await fetch(`${baseUrl}${SummaryApi.googleLogin.url}`, {
+        method: SummaryApi.googleLogin.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken: credentialResponse.credential }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || "Google login failed");
+      } else {
+        setMessage("Google login successful!");
+
+        // Use AuthContext (same as regular login)
+        if (data.token) {
+          login(data.token, {
+            userId: data.userId,
+            name: data.name,
+            email: data.email,
+            isAdmin: data.isAdmin || false,
+            preferredLanguage: data.preferredLanguage
+          });
+        }
+
+        navigate("/dashboard", { replace: true });
+      }
+    } catch (err) {
+      setError("Network error, please try again");
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   return (
     <div className="auth-page">
@@ -141,6 +182,7 @@ const Login = () => {
           display: flex;
           flex-direction: column;
           gap: 12px;
+          width:100%;
         }
 
         .auth-form label {
@@ -221,6 +263,15 @@ const Login = () => {
           transform: translateY(-1px);
           box-shadow: 0 18px 38px rgba(79,70,229,0.65);
         }
+          .g_id_signin {
+  border-radius: 12px !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
+  transition: all 0.2s ease !important;
+}
+.g_id_signin:hover {
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18) !important;
+  transform: translateY(-1px) !important;
+}
 
         .auth-note {
           margin-top: 10px;
@@ -266,7 +317,7 @@ const Login = () => {
             border-radius: 18px;
           }
           .auth-form{
-          width:250px;
+          width:100%;
           }
           .auth-form input {
             padding: 8px 12px;
@@ -325,6 +376,20 @@ const Login = () => {
             />
           </label>
 
+          <p style={{
+            textAlign: "right",
+            margin: "-8px 0 8px 0",
+            fontSize: "0.82rem"
+          }}>
+            <span
+              className="login-link"
+              onClick={() => navigate("/forgot-password")}
+              style={{ cursor: "pointer" }}
+            >
+              Forgot Password?
+            </span>
+          </p>
+
           <button
             type="submit"
             className="auth-submit-btn"
@@ -332,6 +397,34 @@ const Login = () => {
           >
             {loading ? "Logging in..." : "Login"}
           </button>
+          {/* 👇 ADD THIS BLOCK AFTER SUBMIT BUTTON 👇 */}
+          <div style={{ marginTop: '16px' }}>
+            <div style={{
+              height: '1px',
+              background: 'linear-gradient(to right, transparent, #e5e7eb, transparent)',
+              margin: '20px 0 12px 0'
+            }} />
+            <p style={{
+              textAlign: 'center',
+              fontSize: '0.85rem',
+              color: '#6b7280',
+              marginBottom: '16px',
+              fontWeight: '500'
+            }}>
+              Or login with
+            </p>
+
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={() => setError("Google login failed")}
+              theme="outline"
+              size="large"
+              text="signin_with"
+              shape="rectangular"
+              width="100%"
+              useOneTap={false}
+            />
+          </div>
 
           <p className="auth-note">
             Visual alerts will confirm if login succeeds or fails.

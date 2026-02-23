@@ -1,6 +1,8 @@
 // src/pages/LessonsPage.jsx
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { baseUrl } from '../Common/SummaryApi';
+import { useAuth } from '../Provider/AuthContext';
 
 const STORAGE_KEY = 'lessonProgress';
 
@@ -82,10 +84,59 @@ const categoryConfig = [
 const LessonsPage = () => {
   const navigate = useNavigate();
   const [completedIds, setCompletedIds] = useState([]);
+  const [dynamicCategories, setDynamicCategories] = useState([]);
 
+  const { user } = useAuth();
+
+  // derive unified categories list (static + dynamic) so unlock sequence is consistent
+  const staticIds = categoryConfig.map(c => c.id);
+  const newDynamic = dynamicCategories.filter(d => !staticIds.includes(d.id));
+  const allCategories = [...categoryConfig, ...newDynamic];
+
+  // Fetch categories from API
   useEffect(() => {
+    const fetchCategories = async () => {
+      try {
+        const response = await fetch(`${baseUrl}/api/signs/categories/all`);
+        const data = await response.json();
+        if (data.categories && data.categories.length > 0) {
+          // Map API categories to lesson items
+          const mapped = data.categories.map((cat, idx) => {
+            // Generate a gradient color based on index
+            const colors = ['#6366F1', '#F97316', '#0EA5E9', '#22C55E', '#EC4899', '#06B6D4', '#EAB308', '#8B5CF6', '#10B981'];
+            const color = colors[idx % colors.length];
+            const name = typeof cat === 'string' ? cat : (cat.name || '');
+            const coverUrl = typeof cat === 'string' ? null : (cat.coverUrl || null);
+
+            return {
+              id: name.toLowerCase().replace(/\s+/g, '_'),
+              label: name,
+              category: name,
+              desc: `Learn ${name} in sign language`,
+              cover: coverUrl ? `${baseUrl}${coverUrl}` : '/lessons/covers/alphabet-cover.png',
+              accent: color,
+              icon: '🎓'
+            };
+          });
+          setDynamicCategories(mapped);
+          console.log('Fetched categories:', mapped);
+        }
+      } catch (err) {
+        console.error('Error fetching categories:', err);
+      }
+    };
+    fetchCategories();
+  }, []);
+
+  // current user comes from AuthContext
+
+  // Load user-specific lesson progress
+  useEffect(() => {
+    if (!user || !user.userId) return;
+    
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const userSpecificKey = `${STORAGE_KEY}_${user.userId}`;
+      const raw = localStorage.getItem(userSpecificKey);
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
@@ -94,20 +145,23 @@ const LessonsPage = () => {
     } catch (e) {
       console.error('Failed to read lesson progress', e);
     }
-  }, []);
+  }, [user]);
 
   const isUnlocked = (index) => {
     if (index === 0) return true;
-    const prevId = categoryConfig[index - 1].id;
-    return completedIds.includes(prevId);
+    const prev = allCategories[index - 1];
+    if (!prev) return false;
+    return completedIds.includes(prev.id);
   };
 
-  const handleOpenCategory = (id, index, unlocked) => {
+  const handleOpenCategory = (cat, index, unlocked) => {
     if (!unlocked) {
       alert('Please complete the previous chapter to unlock this lesson.');
       return;
     }
-    navigate(`/lesson/${id}`);
+    // Pass the original category label as a query param so backend lookups work
+    const categoryName = cat.category || cat.label || cat.id;
+    navigate(`/lesson/${cat.id}?category=${encodeURIComponent(categoryName)}`);
   };
 
   return (
@@ -343,58 +397,77 @@ const LessonsPage = () => {
       </header>
 
       <main className="lp-grid-categories">
-        {categoryConfig.map((cat, index) => {
-          const unlocked = isUnlocked(index);
-          const isDone = completedIds.includes(cat.id);
-
-          return (
-            <article
-              key={cat.id}
-              className={`lp-cat-card${unlocked ? '' : ' locked'}`}
-              onClick={() => handleOpenCategory(cat.id, index, unlocked)}
-            >
-              {!unlocked && (
-                <div className="lp-cat-lock-badge">
-                  <span>🔒</span>
-                  <span>Complete previous</span>
-                </div>
-              )}
-              {unlocked && isDone && (
-                <div className="lp-cat-lock-badge done">
-                  <span>✅</span>
-                  <span>Finished</span>
-                </div>
-              )}
-
-              <div
-                className="lp-cat-cover"
-                style={{
-                  background: `linear-gradient(135deg, ${cat.accent}22, ${cat.accent}55)`,
-                }}
-              >
-                <img src={cat.cover} alt={`${cat.label} cover`} />
-              </div>
-              <div className="lp-cat-body">
-                <div className="lp-cat-pill">
-                  <span style={{ fontSize: '1.2rem' }}>{cat.icon}</span>
-                  <span>Sign chapter</span>
-                </div>
-                <div className="lp-cat-title">{cat.label}</div>
-                <div className="lp-cat-desc">{cat.desc}</div>
-                <div className="lp-cat-footer">
-                  <span>
-                    {unlocked
-                      ? isDone
-                        ? 'Replay chapter →'
-                        : 'Tap to start →'
-                      : 'Locked until previous'}
-                  </span>
-                  <span>Made for kids</span>
-                </div>
-              </div>
-            </article>
+        {(() => {
+          // Combine static and dynamic categories
+          const staticIds = categoryConfig.map(c => c.id);
+          const newDynamic = dynamicCategories.filter(
+            d => !staticIds.includes(d.id)
           );
-        })}
+          const allCategories = [...categoryConfig, ...newDynamic];
+          
+          return allCategories.map((cat, index) => {
+            // For dynamic categories, consider them unlocked after completing first 3 static lessons
+            let unlocked;
+            if (staticIds.includes(cat.id)) {
+              // Static category: use original unlock logic
+              unlocked = isUnlocked(index);
+            } else {
+              // Dynamic category: unlock after completing first few static lessons
+              const staticCompletedCount = completedIds.filter(id => staticIds.includes(id)).length;
+              unlocked = staticCompletedCount >= 2; // After completing 2+ static lessons
+            }
+            
+            const isDone = completedIds.includes(cat.id);
+
+            return (
+              <article
+                key={cat.id}
+                className={`lp-cat-card${unlocked ? '' : ' locked'}`}
+                onClick={() => handleOpenCategory(cat, index, unlocked)}
+              >
+                {!unlocked && (
+                  <div className="lp-cat-lock-badge">
+                    <span>🔒</span>
+                    <span>Complete previous</span>
+                  </div>
+                )}
+                {unlocked && isDone && (
+                  <div className="lp-cat-lock-badge done">
+                    <span>✅</span>
+                    <span>Finished</span>
+                  </div>
+                )}
+
+                <div
+                  className="lp-cat-cover"
+                  style={{
+                    background: `linear-gradient(135deg, ${cat.accent}22, ${cat.accent}55)`,
+                  }}
+                >
+                  <img src={cat.cover} alt={`${cat.label} cover`} />
+                </div>
+                <div className="lp-cat-body">
+                  <div className="lp-cat-pill">
+                    <span style={{ fontSize: '1.2rem' }}>{cat.icon}</span>
+                    <span>Sign chapter</span>
+                  </div>
+                  <div className="lp-cat-title">{cat.label}</div>
+                  <div className="lp-cat-desc">{cat.desc}</div>
+                  <div className="lp-cat-footer">
+                    <span>
+                      {unlocked
+                        ? isDone
+                          ? 'Replay chapter →'
+                          : 'Tap to start →'
+                        : 'Locked until previous'}
+                    </span>
+                    <span>Made for kids</span>
+                  </div>
+                </div>
+              </article>
+            );
+          });
+        })()}
       </main>
     </div>
   );

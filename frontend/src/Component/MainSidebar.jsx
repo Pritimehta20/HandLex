@@ -396,6 +396,28 @@ const MainSidebar = ({ user, onSignToText, onPractice }) => {
           </NavLink>
 
           <NavLink
+            to="/quiz"
+            onClick={() => setIsOpen(false)}
+            className={({ isActive }) =>
+              "ms-link" + (isActive ? " ms-link-active" : "")
+            }
+          >
+            <span className="ms-icon">🧠</span>
+            <span>Quiz</span>
+          </NavLink>
+
+          <NavLink
+            to="/leaderboard"
+            onClick={() => setIsOpen(false)}
+            className={({ isActive }) =>
+              "ms-link" + (isActive ? " ms-link-active" : "")
+            }
+          >
+            <span className="ms-icon">🥇</span>
+            <span>Leaderboard</span>
+          </NavLink>
+
+          <NavLink
             to="/practice"
             onClick={handlePracticeClick}
             className={({ isActive }) =>

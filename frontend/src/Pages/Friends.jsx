@@ -1,8 +1,9 @@
-// src/pages/Friends.jsx
-import React, { useEffect, useState } from "react";
+// src/pages/Friends.jsx - NOW WORKS WITH YOUR AUTHCONTEXT!
+import React, { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import SummaryApi, { baseUrl } from "../Common/SummaryApi";
 import MainSidebar from "../Component/MainSidebar";
+import { useAuth } from "../Provider/AuthContext"; // 👈 YOUR AUTH CONTEXT
 import { signalingSocket } from "../Provider/CallProvider";
 import "./friends.css";
 
@@ -10,7 +11,8 @@ const jsonHeaders = { "Content-Type": "application/json" };
 
 const Friends = () => {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState(null);
+  const { token, user, isAdmin } = useAuth(); // 🎯 USE YOUR AUTHCONTEXT!
+  
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [friends, setFriends] = useState([]);
@@ -20,47 +22,49 @@ const Friends = () => {
   const [searching, setSearching] = useState(false);
   const [activeLeftTab, setActiveLeftTab] = useState("search");
 
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem("user");
-      if (stored) setCurrentUser(JSON.parse(stored));
-    } catch (e) {
-      console.error("Invalid user JSON", e);
-    }
-  }, []);
+  // 🎯 SIMPLIFIED USER CHECK - Uses YOUR AuthContext!
+  const currentUser = user; // From your AuthContext
+  const userId = user?._id || user?.userId;
 
-  const userId = currentUser?.userId || currentUser?._id;
+  console.log("🔍 AuthContext user:", currentUser); // Debug log
+
+  // Only load if user is logged in
+  useEffect(() => {
+    if (userId && token) {
+      loadFriendsAndRequests();
+    }
+  }, [userId, token]);
 
   const loadFriendsAndRequests = async () => {
-    if (!userId) return;
+    if (!userId || !token) return;
     setLoading(true);
     try {
+      console.log("📡 Loading friends for:", userId);
+      
       const friendsRes = await fetch(
-        `${baseUrl}${SummaryApi.listFriends.url}?userId=${encodeURIComponent(
-          userId
-        )}`
+        `${baseUrl}${SummaryApi.listFriends.url}?userId=${encodeURIComponent(userId)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
       );
       const friendsData = await friendsRes.json();
       setFriends(friendsData.friends || []);
 
       const reqRes = await fetch(
-        `${baseUrl}${
-          SummaryApi.listFriendRequests.url
-        }?userId=${encodeURIComponent(userId)}`
+        `${baseUrl}${SummaryApi.listFriendRequests.url}?userId=${encodeURIComponent(userId)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
       );
       const reqData = await reqRes.json();
       setIncoming(reqData.incoming || []);
       setOutgoing(reqData.outgoing || []);
     } catch (e) {
-      console.error(e);
+      console.error("❌ Friends API error:", e);
     } finally {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (userId) loadFriendsAndRequests();
-  }, [userId]);
 
   const handleSearch = async (e) => {
     e.preventDefault();
@@ -68,12 +72,13 @@ const Friends = () => {
       setSearchResults([]);
       return;
     }
+    setSearching(true);
     try {
-      setSearching(true);
       const res = await fetch(
-        `${baseUrl}${SummaryApi.searchUsers.url}?q=${encodeURIComponent(
-          search.trim()
-        )}`
+        `${baseUrl}${SummaryApi.searchUsers.url}?q=${encodeURIComponent(search.trim())}`,
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
       );
       const data = await res.json();
       setSearchResults((data.users || []).filter((u) => u._id !== userId));
@@ -86,11 +91,17 @@ const Friends = () => {
   };
 
   const sendFriendRequest = async (toUserId) => {
-    if (!userId) return;
+    if (!userId || !token) {
+      alert("Please refresh page");
+      return;
+    }
     try {
       const res = await fetch(baseUrl + SummaryApi.sendFriendRequest.url, {
         method: SummaryApi.sendFriendRequest.method,
-        headers: jsonHeaders,
+        headers: { 
+          ...jsonHeaders,
+          Authorization: `Bearer ${token}`
+        },
         body: JSON.stringify({ fromUserId: userId, toUserId }),
       });
       const data = await res.json();
@@ -98,7 +109,7 @@ const Friends = () => {
         alert(data.error || "Failed to send request");
       } else {
         await loadFriendsAndRequests();
-        alert("Friend request sent");
+        alert("Friend request sent! 🎉");
       }
     } catch (e) {
       console.error(e);
@@ -107,15 +118,16 @@ const Friends = () => {
   };
 
   const respond = async (requestId, action) => {
-    if (!userId) return;
+    if (!userId || !token) return;
     try {
       const res = await fetch(
-        `${baseUrl}${
-          SummaryApi.respondFriendRequest.url
-        }/${requestId}/respond`,
+        `${baseUrl}${SummaryApi.respondFriendRequest.url}/${requestId}/respond`,
         {
           method: SummaryApi.respondFriendRequest.method,
-          headers: jsonHeaders,
+          headers: { 
+            ...jsonHeaders,
+            Authorization: `Bearer ${token}`
+          },
           body: JSON.stringify({ userId, action }),
         }
       );
@@ -137,11 +149,11 @@ const Friends = () => {
   };
 
   const handleStartCall = (friend) => {
-    if (!userId || (!friend._id && !friend.id)) {
-      alert("Missing user information for call.");
+    if (!userId || !token) {
+      alert("Please refresh the page");
       return;
     }
-    const friendId = friend._id || friend.id;
+    const friendId = friend._id || friend.id || friend.userId;
     const roomId = buildRoomId(userId, friendId);
 
     signalingSocket.emit("call-user", {
@@ -153,38 +165,75 @@ const Friends = () => {
     navigate(`/call/${roomId}`);
   };
 
-  if (!currentUser) {
+  // 🎯 PERFECT LOGIN CHECK - Uses YOUR AuthContext!
+  if (!token || !user || !userId) {
     return (
-      <div
-        style={{
-          display: "flex",
-          minHeight: "100vh",
-          alignItems: "center",
-          justifyContent: "center",
-          background:
-            "radial-gradient(circle at top left, #e0f2fe, #fef9c3 40%, #fee2e2 80%)",
-        }}
-      >
-        <div
-          style={{
-            background: "rgba(255,255,255,0.96)",
-            padding: "20px 26px",
-            borderRadius: 20,
-            boxShadow: "0 18px 40px rgba(15,23,42,0.25)",
-            textAlign: "center",
-          }}
-        >
-          <h2 style={{ marginTop: 0 }}>Friends</h2>
-          <p>Please log in to use friends.</p>
+      <div style={{
+        display: "flex",
+        minHeight: "100vh",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "linear-gradient(135deg, #e0f2fe, #fef9c3 40%, #fee2e2 80%)",
+        padding: "20px"
+      }}>
+        <div style={{
+          background: "rgba(255,255,255,0.95)",
+          padding: "40px",
+          borderRadius: "24px",
+          boxShadow: "0 20px 48px rgba(15,23,42,0.25)",
+          textAlign: "center",
+          maxWidth: "400px",
+          width: "100%"
+        }}>
+          <div style={{ fontSize: "4rem", marginBottom: "20px" }}>🤝</div>
+          <h2 style={{ margin: "0 0 12px 0", color: "#1e293b" }}>Sign Language Friends</h2>
+          <p style={{ margin: "0 0 24px 0", color: "#64748b" }}>
+            Please log in to find sign language partners
+          </p>
+          <button
+            onClick={() => navigate("/login")}
+            style={{
+              padding: "14px 28px",
+              background: "linear-gradient(135deg, #ec4899, #f472b6)",
+              color: "white",
+              border: "none",
+              borderRadius: "14px",
+              fontWeight: "700",
+              fontSize: "1rem",
+              cursor: "pointer",
+              boxShadow: "0 8px 24px rgba(236,72,153,0.4)"
+            }}
+          >
+            Go to Login →
+          </button>
+          <details style={{ marginTop: "20px" }}>
+            <summary>Debug AuthContext (click)</summary>
+            <pre style={{ 
+              fontSize: "12px", 
+              background: "#f8f9fa", 
+              padding: "12px", 
+              borderRadius: "8px",
+              maxHeight: "150px",
+              overflow: "auto",
+              marginTop: "12px"
+            }}>
+{JSON.stringify({
+  token: token ? "PRESENT" : "MISSING",
+  user: user,
+  userId: userId,
+  isAdmin: isAdmin
+}, null, 2)}
+            </pre>
+          </details>
         </div>
       </div>
     );
   }
 
+  // 🎉 USER IS LOGGED IN! Show friends page
   return (
     <div className="ms-shell">
       <MainSidebar user={currentUser} />
-
       <div className="ms-shell-content friends-root">
         <div className="friends-layout">
           <div className="friends-header-row">
@@ -195,7 +244,7 @@ const Friends = () => {
               </div>
               <h2 className="friends-title">Friends & Sign Partners</h2>
               <p className="friends-subtitle">
-                Discover learners, send requests, and connect instantly with a big video call button.
+                Discover learners, send requests, and connect instantly with video calls.
               </p>
             </div>
           </div>
@@ -205,17 +254,14 @@ const Friends = () => {
               <span className="friends-search-icon">🔍</span>
               <input
                 className="friends-search-input"
-                placeholder="Search users or friends by name or email"
+                placeholder="Search users by name or email"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
               <button
                 type="submit"
                 disabled={searching}
-                className={
-                  "friends-search-button " +
-                  (searching ? "friends-search-button--loading" : "")
-                }
+                className={`friends-search-button ${searching ? "friends-search-button--loading" : ""}`}
               >
                 {searching ? "Searching…" : "Search"}
               </button>
@@ -223,54 +269,39 @@ const Friends = () => {
           </form>
 
           <div className="friends-main">
+            {/* LEFT PANEL - Search/Requests */}
             <div className="friends-left-card">
               <div className="friends-tabs">
                 <button
-                  type="button"
-                  className={
-                    "friends-tab " +
-                    (activeLeftTab === "search" ? "friends-tab-active" : "")
-                  }
+                  className={`friends-tab ${activeLeftTab === "search" ? "friends-tab-active" : ""}`}
                   onClick={() => setActiveLeftTab("search")}
                 >
                   Search Results
                 </button>
                 <button
-                  type="button"
-                  className={
-                    "friends-tab " +
-                    (activeLeftTab === "incoming"
-                      ? "friends-tab-active"
-                      : "")
-                  }
+                  className={`friends-tab ${activeLeftTab === "incoming" ? "friends-tab-active" : ""}`}
                   onClick={() => setActiveLeftTab("incoming")}
                 >
-                  Incoming Requests
+                  Incoming ({incoming.length})
                 </button>
                 <button
-                  type="button"
-                  className={
-                    "friends-tab " +
-                    (activeLeftTab === "outgoing"
-                      ? "friends-tab-active"
-                      : "")
-                  }
+                  className={`friends-tab ${activeLeftTab === "outgoing" ? "friends-tab-active" : ""}`}
                   onClick={() => setActiveLeftTab("outgoing")}
                 >
-                  Sent Requests
+                  Sent ({outgoing.length})
                 </button>
               </div>
 
               <div className="friends-left-body">
+                {/* SEARCH TAB */}
                 {activeLeftTab === "search" && (
                   <>
-                    {searchResults.length === 0 && (
+                    {searchResults.length === 0 ? (
                       <div className="friends-empty">
                         <h4>Start connecting</h4>
-                        <p>Type a name or email above to discover new friends.</p>
+                        <p>Search for users by name or email to add sign partners</p>
                       </div>
-                    )}
-                    {searchResults.length > 0 && (
+                    ) : (
                       <div className="friends-list-grid">
                         {searchResults.map((u) => {
                           const initials = (u.name || u.email || "?")
@@ -280,16 +311,11 @@ const Friends = () => {
                             .slice(0, 2)
                             .toUpperCase();
                           return (
-                            <div
-                              key={u._id}
-                              className="friend-card friend-card--hover"
-                            >
+                            <div key={u._id} className="friend-card friend-card--hover">
                               <div className="friend-main">
                                 <div className="friend-avatar">{initials}</div>
                                 <div className="friend-main-info">
-                                  <span className="friend-name">
-                                    {u.name || u.email}
-                                  </span>
+                                  <span className="friend-name">{u.name || u.email}</span>
                                   <span className="friend-email">{u.email}</span>
                                 </div>
                               </div>
@@ -297,7 +323,7 @@ const Friends = () => {
                                 onClick={() => sendFriendRequest(u._id)}
                                 className="btn btn--primary"
                               >
-                                ➕ Add friend
+                                ➕ Add Friend
                               </button>
                             </div>
                           );
@@ -307,19 +333,18 @@ const Friends = () => {
                   </>
                 )}
 
+                {/* INCOMING REQUESTS */}
                 {activeLeftTab === "incoming" && (
                   <>
-                    {incoming.length === 0 && (
+                    {incoming.length === 0 ? (
                       <div className="friends-empty friends-empty--warm">
                         <h4>No new requests</h4>
-                        <p>You have no new friend requests right now.</p>
+                        <p>Share your profile to get friend requests!</p>
                       </div>
-                    )}
-                    {incoming.length > 0 && (
+                    ) : (
                       <div className="friends-list-grid">
                         {incoming.map((req) => {
-                          const name =
-                            req.fromUser?.name || req.fromUser?.email;
+                          const name = req.fromUser?.name || req.fromUser?.email;
                           const initials = (name || "?")
                             .split(" ")
                             .map((p) => p[0])
@@ -327,17 +352,12 @@ const Friends = () => {
                             .slice(0, 2)
                             .toUpperCase();
                           return (
-                            <div
-                              key={req._id}
-                              className="friend-card friend-card--hover"
-                            >
+                            <div key={req._id} className="friend-card friend-card--hover">
                               <div className="friend-main">
                                 <div className="friend-avatar">{initials}</div>
                                 <div className="friend-main-info">
                                   <span className="friend-name">{name}</span>
-                                  <span className="friend-hint">
-                                    wants to be your friend
-                                  </span>
+                                  <span className="friend-hint">wants to sign with you</span>
                                 </div>
                               </div>
                               <div className="friend-actions-vertical">
@@ -345,13 +365,13 @@ const Friends = () => {
                                   onClick={() => respond(req._id, "accept")}
                                   className="btn btn--success-light"
                                 >
-                                  Accept
+                                  ✅ Accept
                                 </button>
                                 <button
                                   onClick={() => respond(req._id, "reject")}
                                   className="btn btn--danger-light"
                                 >
-                                  Reject
+                                  ❌ Reject
                                 </button>
                               </div>
                             </div>
@@ -362,19 +382,18 @@ const Friends = () => {
                   </>
                 )}
 
+                {/* OUTGOING REQUESTS */}
                 {activeLeftTab === "outgoing" && (
                   <>
-                    {outgoing.length === 0 && (
+                    {outgoing.length === 0 ? (
                       <div className="friends-empty friends-empty--cool">
                         <h4>No pending requests</h4>
-                        <p>You have no pending sent requests.</p>
+                        <p>Send friend requests from search tab</p>
                       </div>
-                    )}
-                    {outgoing.length > 0 && (
+                    ) : (
                       <div className="friends-list-grid">
                         {outgoing.map((req) => {
-                          const name =
-                            req.toUser?.name || req.toUser?.email;
+                          const name = req.toUser?.name || req.toUser?.email;
                           const initials = (name || "?")
                             .split(" ")
                             .map((p) => p[0])
@@ -382,20 +401,15 @@ const Friends = () => {
                             .slice(0, 2)
                             .toUpperCase();
                           return (
-                            <div
-                              key={req._id}
-                              className="friend-card friend-card--hover"
-                            >
+                            <div key={req._id} className="friend-card friend-card--hover">
                               <div className="friend-main">
                                 <div className="friend-avatar">{initials}</div>
                                 <div className="friend-main-info">
                                   <span className="friend-name">{name}</span>
-                                  <span className="friend-hint">
-                                    Request pending
-                                  </span>
+                                  <span className="friend-hint">Request sent</span>
                                 </div>
                               </div>
-                              <span className="chip-pill">Pending</span>
+                              <span className="chip-pill chip-pill--pending">Pending</span>
                             </div>
                           );
                         })}
@@ -406,24 +420,19 @@ const Friends = () => {
               </div>
             </div>
 
+            {/* RIGHT PANEL - Friends List */}
             <div className="friends-right-card">
               <div className="friends-right-header">
-                <span className="friends-right-title">Friends overview</span>
-                <span className="friends-right-count">
-                  {friends.length} total
-                </span>
+                <span className="friends-right-title">Your Sign Partners</span>
+                <span className="friends-right-count">{friends.length} friends</span>
               </div>
 
-              <div className="friends-right-section-label">Friends</div>
+              <div className="friends-right-section-label">Active Friends</div>
               <div className="friends-right-list">
-                {loading && (
-                  <span className="friends-status-text">
-                    Loading friends…
-                  </span>
-                )}
+                {loading && <span className="friends-status-text">Loading friends…</span>}
                 {!loading && friends.length === 0 && (
                   <span className="friends-status-text">
-                    No friends yet. Add someone from the search tab.
+                    No friends yet. Search and add partners above!
                   </span>
                 )}
                 {!loading &&
@@ -435,25 +444,23 @@ const Friends = () => {
                       .slice(0, 2)
                       .toUpperCase();
                     return (
-                      <div key={f.id || f._id} className="friend-card">
+                      <div key={f._id || f.id} className="friend-card">
                         <div className="friend-main">
                           <div className="friend-avatar">{initials}</div>
                           <div className="friend-main-info">
-                            <span className="friend-name">
-                              {f.name || f.email}
-                            </span>
+                            <span className="friend-name">{f.name || f.email}</span>
                             <span className="friend-email">{f.email}</span>
                           </div>
                         </div>
                         <div className="friend-actions-vertical">
-                          <button
-                            className="btn btn--primary"
+                          <button 
+                            className="btn btn--primary" 
                             onClick={() => handleStartCall(f)}
                           >
-                            🎥 Connect now
+                            🎥 Video Call
                           </button>
                           <button className="btn btn--ghost" disabled>
-                            Sign call (coming soon)
+                            👋 Sign Call (soon)
                           </button>
                         </div>
                       </div>
@@ -461,24 +468,18 @@ const Friends = () => {
                   })}
               </div>
 
-              <div className="friends-right-section-label">
-                Requests overview
-              </div>
+              <div className="friends-right-section-label">Requests Summary</div>
               <div className="friends-overview-grid">
                 <div className="friends-overview-card friends-overview-card--incoming">
-                  <div className="friends-overview-label">Incoming</div>
-                  <div className="friends-overview-value">
-                    {incoming.length}
-                  </div>
+                  <div className="friends-overview-label">📥 Incoming</div>
+                  <div className="friends-overview-value">{incoming.length}</div>
                 </div>
                 <div className="friends-overview-card friends-overview-card--sent">
-                  <div className="friends-overview-label">Sent</div>
-                  <div className="friends-overview-value">
-                    {outgoing.length}
-                  </div>
+                  <div className="friends-overview-label">📤 Sent</div>
+                  <div className="friends-overview-value">{outgoing.length}</div>
                 </div>
                 <div className="friends-overview-card friends-overview-card--total">
-                  <div className="friends-overview-label">Total</div>
+                  <div className="friends-overview-label">👥 Total</div>
                   <div className="friends-overview-value">
                     {friends.length + incoming.length + outgoing.length}
                   </div>
@@ -487,7 +488,7 @@ const Friends = () => {
             </div>
           </div>
         </div>
-      </div> 
+      </div>
     </div>
   );
 };

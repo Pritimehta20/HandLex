@@ -1,6 +1,6 @@
 // src/pages/Dashboard.jsx
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from 'react-router-dom';
 import MainSidebar from "../Component/MainSidebar";
 
 // simple hook to animate numbers (for the practice ring)
@@ -24,6 +24,13 @@ const useAnimatedValue = (target, duration = 600) => {
   }, [target, duration]);
 
   return value;
+};
+
+const getQuizGradeStyle = (percentage) => {
+  if (percentage >= 90) return { bg: '#dcfce7', color: '#166534', emoji: '🥇' };
+  if (percentage >= 70) return { bg: '#fef3c7', color: '#92400e', emoji: '🥈' };
+  if (percentage >= 50) return { bg: '#dbeafe', color: '#1e40af', emoji: '🥉' };
+  return { bg: '#fecaca', color: '#b91c1c', emoji: '📚' };
 };
 
 const heroSlides = [
@@ -68,9 +75,15 @@ const Dashboard = () => {
   const [practiceSummary, setPracticeSummary] = useState(null);
   const animatedAvg = useAnimatedValue(practiceSummary?.avgScore || 0, 800);
 
+  // ✅ QUIZ HISTORY - NEW STATE
+  const [quizHistoryData, setQuizHistoryData] = useState([]);
+
+// ✅ NEWEST QUIZ FIRST
+const lastQuizResult = quizHistoryData.length > 0 ? quizHistoryData[0] : null;
+
   useEffect(() => {
     const token = localStorage.getItem("authToken");
-    const storedUser = localStorage.getItem("user");
+    const storedUser = localStorage.getItem("authUser");
 
     if (token || storedUser) {
       if (storedUser) {
@@ -85,6 +98,47 @@ const Dashboard = () => {
       navigate("/login", { replace: true });
     }
   }, [navigate]);
+
+  // ✅ QUIZ HISTORY LOADING
+  // ✅ FIXED: QUIZ HISTORY with SORTING + REAL-TIME UPDATES
+useEffect(() => {
+  if (!user) return;
+
+  const userId = user?.userId || user?._id || user?.id || 'guest';
+  const quizHistoryKey = `quizHistory_${userId}`;
+  
+  const loadQuizHistory = () => {
+    try {
+      console.log('🔍 Loading quiz history for:', userId);
+      const raw = localStorage.getItem(quizHistoryKey);
+      const history = raw ? JSON.parse(raw) : [];
+      
+      // ✅ SORT NEWEST FIRST
+      const sortedHistory = Array.isArray(history) 
+        ? history.sort((a, b) => new Date(b.date) - new Date(a.date))
+        : [];
+        
+      console.log('📊 Loaded & sorted:', sortedHistory.length, 'quizzes');
+      setQuizHistoryData(sortedHistory);
+    } catch (e) {
+      console.error("❌ Quiz history error:", e);
+      setQuizHistoryData([]);
+    }
+  };
+
+  loadQuizHistory();
+  
+  // ✅ RELOAD ON NEW QUIZ RESULT (real-time sync)
+  const handleQuizSaved = () => loadQuizHistory();
+  window.addEventListener('quizResultSaved', handleQuizSaved);
+  window.addEventListener('storage', loadQuizHistory);
+  
+  return () => {
+    window.removeEventListener('quizResultSaved', handleQuizSaved);
+    window.removeEventListener('storage', loadQuizHistory);
+  };
+}, [user?.userId]);
+
 
   useEffect(() => {
     const checkServices = async () => {
@@ -120,17 +174,31 @@ const Dashboard = () => {
     return () => clearInterval(id);
   }, []);
 
-  // load practice weak‑areas summary once
+  // load practice weak‑areas summary once (user-specific)
   useEffect(() => {
+    const userId = user?.userId || user?._id || user?.id;
+    
+    if (!userId) {
+      console.warn("Dashboard: No User ID found yet, waiting...");
+      return;
+    }
+    
     try {
-      const raw = localStorage.getItem("practiceWeakSummary");
-      if (!raw) return;
+      const userSpecificKey = `practiceWeakSummary_${userId}`;
+      const raw = localStorage.getItem(userSpecificKey);
+      
+      if (!raw) {
+        console.log("Dashboard: No practice data found for key:", userSpecificKey);
+        return;
+      }
+      
       const data = JSON.parse(raw);
       setPracticeSummary(data);
+      console.log("Dashboard: Successfully loaded practice summary", data);
     } catch (e) {
-      console.error("Failed to read practiceWeakSummary", e);
+      console.error("Dashboard: Failed to read practiceWeakSummary", e);
     }
-  }, []);
+  }, [user]);
 
   const handleSignToText = async () => {
     if (signStatus !== "🟢 Online") {
@@ -181,6 +249,16 @@ const Dashboard = () => {
     }
     navigate("/text-to-sign");
   };
+
+  // ✅ QUIZ CALCULATIONS
+  // ✅ FIXED QUIZ STATS
+const bestQuizScore = quizHistoryData.length > 0 
+  ? Math.max(...quizHistoryData.map(h => h.percentage || 0))
+  : 0;
+const avgQuizScore = quizHistoryData.length > 0 
+  ? Math.round(quizHistoryData.reduce((sum, h) => sum + (h.percentage || 0), 0) / quizHistoryData.length)
+  : 0;
+const totalQuizzes = quizHistoryData.length;
 
   if (isAuthenticating) {
     return (
@@ -491,14 +569,35 @@ const Dashboard = () => {
           color:#166534;
         }
 
+        /* ✅ QUIZ HISTORY CARD */
+        .dash-quiz-card {
+          max-width: 1040px;
+          margin: 28px auto 22px;
+          background: linear-gradient(135deg, #e8f5e8 0%, #f0f9f0 100%);
+          border-radius: 22px;
+          padding: 24px;
+          box-shadow: 0 20px 50px rgba(34,197,94,0.25);
+          border: 2px solid rgba(34,197,94,0.2);
+          scrollbar-width: thin;
+          scrollbar-color: rgba(34,197,94,0.3) transparent;
+        }
+        .dash-quiz-card::-webkit-scrollbar {
+          width: 6px;
+        }
+        .dash-quiz-card::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .dash-quiz-card::-webkit-scrollbar-thumb {
+          background: rgba(34,197,94,0.3);
+          border-radius: 3px;
+        }
+
         @keyframes dash-fade-in {
           from { opacity:0; transform:translateY(10px) scale(0.98); }
           to { opacity:1; transform:translateY(0) scale(1); }
         }
 
         /* RESPONSIVE BREAKPOINTS */
-
-        /* Tablets & small laptops */
         @media (max-width: 1024px) {
           .dash-main {
             padding: 24px 14px 30px;
@@ -512,7 +611,6 @@ const Dashboard = () => {
           }
         }
 
-        /* Phones */
         @media (max-width: 768px) {
           .dash-main {
             padding: 20px 10px 26px;
@@ -542,7 +640,6 @@ const Dashboard = () => {
           }
         }
 
-        /* Very small phones */
         @media (max-width: 480px) {
           .dash-main {
             padding: 16px 8px 22px;
@@ -738,7 +835,175 @@ const Dashboard = () => {
             >
               🎯 Practice Signs
             </button>
+
+            {/* ✅ NEW QUIZ BUTTON */}
+            <button
+              onClick={() => navigate("/quiz")}
+              className="dash-btn"
+              style={{ 
+                background: "linear-gradient(135deg, #22c55e, #4ade80)",
+                color: "white",
+                fontWeight: "700"
+              }}
+            >
+              📊 Take Quiz (15 Questions)
+            </button>
           </div>
+
+          {/* ✅ COMPLETE QUIZ HISTORY SECTION */}
+         {/* ✅ ONLY LAST QUIZ RESULT - FULLY RESPONSIVE FOR ALL DEVICES */}
+{user && lastQuizResult && (
+  <div className="dash-quiz-card" style={{ 
+    maxWidth: '1040px', 
+    margin: '20px auto 18px',
+    background: 'linear-gradient(135deg, #e8f5e8 0%, #f0f9f0 100%)',
+    borderRadius: '16px',
+    padding: '20px',
+    boxShadow: '0 12px 30px rgba(34,197,94,0.15)',
+    border: '2px solid rgba(34,197,94,0.15)'
+  }}>
+    <div style={{ 
+      display: 'flex', 
+      justifyContent: 'space-between', 
+      alignItems: 'center', 
+      marginBottom: '16px', 
+      flexWrap: 'wrap', 
+      gap: '12px' 
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ 
+          fontSize: 'clamp(1.4rem, 4vw, 1.6rem)', 
+          padding: '8px', 
+          background: 'linear-gradient(135deg, #22c55e, #4ade80)', 
+          borderRadius: '14px', 
+          color: 'white' 
+        }}>
+          📊
+        </div>
+        <div>
+          <div style={{ 
+            fontWeight: '700', 
+            fontSize: 'clamp(1rem, 3vw, 1.1rem)', 
+            color: '#166534',
+            lineHeight: '1.3'
+          }}>Last Quiz</div>
+          <div style={{ 
+            fontSize: 'clamp(0.75rem, 2.5vw, 0.85rem)', 
+            color: '#6b7280' 
+          }}>
+            {lastQuizResult.completedAt}
+          </div>
+        </div>
+      </div>
+      
+      {/* Score Badge */}
+      {(() => {
+        const percentage = lastQuizResult.percentage || 0;
+        const getColor = (p) => p >= 80 ? { bg: '#dcfce7', color: '#166534', emoji: '🥇' } : 
+                               p >= 60 ? { bg: '#fef3c7', color: '#92400e', emoji: '🥈' } : 
+                               { bg: '#fecaca', color: '#b91c1c', emoji: '🥉' };
+        const scoreStyle = getColor(percentage);
+        return (
+          <div style={{
+            padding: 'clamp(8px, 2vw, 10px) clamp(16px, 4vw, 20px)', 
+            background: scoreStyle.bg, 
+            borderRadius: '20px',
+            color: scoreStyle.color, 
+            fontWeight: '700', 
+            fontSize: 'clamp(1rem, 3.5vw, 1.15rem)',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.1)',
+            lineHeight: '1.2'
+          }}>
+            {scoreStyle.emoji} {percentage}%
+          </div>
+        );
+      })()}
+    </div>
+
+    <div style={{
+      display: 'grid', 
+      gridTemplateColumns: 'repeat(auto-fit, minmax(clamp(220px, 45vw, 240px), 1fr))',
+      gap: 'clamp(12px, 4vw, 18px)', 
+      marginBottom: '20px', 
+      padding: 'clamp(14px, 4vw, 18px)',
+      background: 'rgba(255,255,255,0.85)', 
+      borderRadius: '16px'
+    }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ 
+          fontSize: 'clamp(1.8rem, 8vw, 2.2rem)', 
+          fontWeight: '800', 
+          color: '#1e293b',
+          lineHeight: '1.1',
+          marginBottom: '4px'
+        }}>
+          {lastQuizResult.score}/{lastQuizResult.total}
+        </div>
+        <div style={{ 
+          fontSize: 'clamp(0.85rem, 3vw, 0.95rem)', 
+          color: '#6b7280', 
+          fontWeight: '500' 
+        }}>
+          Correct Answers
+        </div>
+      </div>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ 
+          fontSize: 'clamp(1rem, 3.5vw, 1.1rem)', 
+          fontWeight: '700', 
+          color: '#374151', 
+          padding: 'clamp(6px, 2vw, 8px) clamp(14px, 4vw, 18px)', 
+          background: 'rgba(34,197,94,0.08)', 
+          borderRadius: '14px',
+          lineHeight: '1.2'
+        }}>
+          {lastQuizResult.grade}
+        </div>
+        <div style={{ 
+          fontSize: 'clamp(0.75rem, 2.5vw, 0.85rem)', 
+          color: '#6b7280', 
+          marginTop: '6px' 
+        }}>
+          Performance Grade
+        </div>
+      </div>
+    </div>
+
+    <div style={{ 
+      display: 'flex', 
+      gap: 'clamp(12px, 3vw, 16px)', 
+      justifyContent: 'center', 
+      flexWrap: 'wrap' 
+    }}>
+      <button onClick={() => navigate("/quiz")}
+        style={{
+          background: 'linear-gradient(135deg, #22c55e, #4ade80)', 
+          color: 'white', 
+          border: 'none',
+          padding: 'clamp(10px, 3vw, 12px) clamp(22px, 5vw, 28px)', 
+          borderRadius: '24px', 
+          fontWeight: '700', 
+          fontSize: 'clamp(0.95rem, 3vw, 1rem)',
+          boxShadow: '0 6px 25px rgba(34,197,94,0.3)',
+          lineHeight: '1.2',
+          transition: 'all 0.2s ease',
+          cursor: 'pointer'
+        }}
+        onMouseEnter={(e) => {
+          e.target.style.transform = 'translateY(-2px)';
+          e.target.style.boxShadow = '0 10px 30px rgba(34,197,94,0.4)';
+        }}
+        onMouseLeave={(e) => {
+          e.target.style.transform = 'translateY(0)';
+          e.target.style.boxShadow = '0 6px 25px rgba(34,197,94,0.3)';
+        }}
+      >
+        🎯 New Quiz
+      </button>
+    </div>
+  </div>
+)}
+
 
           {/* Practice insights */}
           {practiceSummary && (
@@ -912,6 +1177,13 @@ const Dashboard = () => {
               <p>
                 <strong>MERN Backend:</strong> 🟢 Online (Port 8080)
               </p>
+              {/* ✅ QUIZ STATS IN STATUS */}
+             {quizHistoryData.length > 0 && (
+  <p>
+    <strong>📊 Quizzes:</strong> {totalQuizzes} total • Best: {bestQuizScore}% • Avg: {avgQuizScore}%
+  </p>
+)}
+
             </div>
           </div>
         </div>

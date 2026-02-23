@@ -9,6 +9,18 @@ const SummaryApi = {
         url: '/api/users/login',
         method: 'POST'
     },
+    forgotPassword: {
+        url: '/api/users/forgot-password',
+        method: 'POST'
+    },
+    verifyOTP: {
+        url: '/api/users/verify-otp',
+        method: 'POST'
+    },
+    resetPassword: {
+        url: '/api/users/reset-password',
+        method: 'POST'
+    },
     signStatus: {
         url: '/api/sign-status',
         method: 'GET'
@@ -37,5 +49,9 @@ const SummaryApi = {
     url: '/api/friends', // + ?userId=
     method: 'GET',
   },
+   googleLogin: {
+        url: '/api/users/google-login',
+        method: 'POST'
+    },
 }
 export default SummaryApi;

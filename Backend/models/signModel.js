@@ -11,6 +11,12 @@ const signSchema = new mongoose.Schema({
         default: 'ISL' 
     },
      // Indian Sign Language (default)
+    category: {
+        type: String,
+        required: true,
+        default: 'Common'
+    },
+     // e.g., "Greetings", "Colors", "Numbers", "Fruits", etc.
     mediaType: { 
         type: String, 
         enum: ['video', 'image'], 
@@ -41,6 +47,7 @@ const signSchema = new mongoose.Schema({
 
 signSchema.index({ gloss: 1 }); 
 signSchema.index({ tags: 1 });
+signSchema.index({ category: 1 });
 
 const signModel = mongoose.model("Sign", signSchema);
 

@@ -12,7 +12,9 @@ const userSchema = new mongoose.Schema({
     },
     passwordHash: {
         type: String,
-        required: [true, "Please provide password"],
+        required: [function() {
+            return !this.googleId;  // ✅ Required ONLY for non-Google users
+        }, "Please provide password"]
     },
     status : {
         type : String,
@@ -32,10 +34,25 @@ const userSchema = new mongoose.Schema({
         enum: ['en', 'hi'], 
         default: 'en' 
     },
-
+    resetOTP: {
+        type: String,
+        default: null
+    },
+    resetOTPExpires: {
+        type: Date,
+        default: null
+    },
+    isAdmin: {
+        type: Boolean,
+        default: false
+    },
+     googleId: {  // ✅ NEW: For Google OAuth users
+        type: String,
+        unique: true,
+        sparse: true,
+        default: null
+    }
 }, { timestamps: true });
-
-userSchema.index({ email: 1 }, { unique: true });
 
 const userModel = mongoose.model("User", userSchema);
 

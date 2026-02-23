@@ -1,6 +1,7 @@
 // src/pages/LessonCategoryPage.jsx
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
+import { useAuth } from '../Provider/AuthContext';
 import AlphabetPosters from '../Component/AlphabetPosters';
 import NumberPosters from '../Component/NumberPosters';
 import ColorsPosters from '../Component/ColorsPosters';
@@ -10,69 +11,82 @@ import GreetingsPosters from '../Component/GreetingsPosters';
 import BodySensationsPosters from '../Component/BodySensationsPosters';
 import FamilyPosters from '../Component/FamilyPosters';
 import CommonInteractionsPosters from '../Component/CommonInteractionsPosters';
+import DynamicSignPosters from '../Component/DynamicSignPosters';
 
 const STORAGE_KEY = 'lessonProgress';
 const ZOOM_TRACK_KEY = 'lessonZooms';
 
-const markLessonComplete = (categoryId) => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const list = raw ? JSON.parse(raw) : [];
-    const safeList = Array.isArray(list) ? list : [];
-    if (!safeList.includes(categoryId)) {
-      const updated = [...safeList, categoryId];
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    }
-  } catch (e) {
-    console.error('Failed to save lesson progress', e);
-  }
-};
-
-const checkAndCompleteLesson = (categoryId, zoomCount) => {
-  const expectedItems = {
-    alphabet: 26,
-    numbers: 10,
-    common_interactions: 11,
-    colors: 11,
-    fruits: 12,
-    emotions: 8,
-    greetings: 7,
-    sensations: 13,
-    family: 9,
-  };
-
-  const expected = expectedItems[categoryId] || 10;
-  const threshold = Math.ceil(expected * 0.7);
-
-  if (zoomCount >= threshold) {
-    markLessonComplete(categoryId);
-    return true;
-  }
-  return false;
-};
-
 const LessonCategoryPage = () => {
   const navigate = useNavigate();
   const { categoryId } = useParams();
+  const location = useLocation();
+  const query = new URLSearchParams(location.search);
+  const categoryName = query.get('category') || null; // original category label from LessonsPage
+  const { user } = useAuth();
   const [zoomSrc, setZoomSrc] = useState(null);
   const [zoomLabel, setZoomLabel] = useState('');
   const [zoomCount, setZoomCount] = useState(0);
   const [isCompleted, setIsCompleted] = useState(false);
 
+  // current user comes from AuthContext
+
+  // Helper function to mark lesson complete (now inside component with access to userId)
+  const markLessonComplete = (catId, userId) => {
+    if (!userId) return;
+    try {
+      const userSpecificKey = `${STORAGE_KEY}_${userId}`;
+      const raw = localStorage.getItem(userSpecificKey);
+      const list = raw ? JSON.parse(raw) : [];
+      const safeList = Array.isArray(list) ? list : [];
+      if (!safeList.includes(catId)) {
+        const updated = [...safeList, catId];
+        localStorage.setItem(userSpecificKey, JSON.stringify(updated));
+      }
+    } catch (e) {
+      console.error('Failed to save lesson progress', e);
+    }
+  };
+
+  // Helper function to check and complete lesson
+  const checkAndCompleteLesson = (catId, zoomCnt, userId) => {
+    const expectedItems = {
+      alphabet: 26,
+      numbers: 10,
+      common_interactions: 11,
+      colors: 11,
+      fruits: 12,
+      emotions: 8,
+      greetings: 7,
+      sensations: 13,
+      family: 9,
+    };
+
+    const expected = expectedItems[catId] || 5; // Default to 5 for dynamic categories
+    const threshold = Math.ceil(expected * 0.7);
+
+    if (zoomCnt >= threshold) {
+      markLessonComplete(catId, userId);
+      return true;
+    }
+    return false;
+  };
+
   useEffect(() => {
-    if (!categoryId) return;
+    if (!categoryId || !user || !user.userId) return;
 
     try {
-      const zoomsRaw = localStorage.getItem(`${ZOOM_TRACK_KEY}_${categoryId}`);
+      const userSpecificZoomKey = `${ZOOM_TRACK_KEY}_${user.userId}_${categoryId}`;
+      const zoomsRaw = localStorage.getItem(userSpecificZoomKey);
       const zooms = zoomsRaw ? JSON.parse(zoomsRaw) : [];
       setZoomCount(zooms.length);
 
-      const progressRaw = localStorage.getItem(STORAGE_KEY);
+      const userSpecificKey = `${STORAGE_KEY}_${user.userId}`;
+      const progressRaw = localStorage.getItem(userSpecificKey);
       const completed = progressRaw ? JSON.parse(progressRaw) : [];
       setIsCompleted(completed.includes(categoryId));
 
       if (zooms.length > 0 && !completed.includes(categoryId)) {
-        const autoCompleted = checkAndCompleteLesson(categoryId, zooms.length);
+        const autoCompleted = checkAndCompleteLesson(categoryId, zooms.length, user.userId);
         if (autoCompleted) {
           setIsCompleted(true);
           alert(
@@ -83,26 +97,28 @@ const LessonCategoryPage = () => {
     } catch (e) {
       console.error('Failed to load progress', e);
     }
-  }, [categoryId]);
+  }, [categoryId, user]);
 
   const trackZoom = (src, label) => {
-    if (!categoryId) return;
+    // Always open zoom modal (allow anonymous users to zoom)
+    setZoomSrc(src);
+    setZoomLabel(label);
 
-    // Only track progress while not completed
+    // Only track progress for authenticated users and when categoryId exists
+    if (!categoryId || !user || !user.userId) return;
+
     if (!isCompleted) {
       try {
-        const zoomsRaw = localStorage.getItem(`${ZOOM_TRACK_KEY}_${categoryId}`);
+        const userSpecificZoomKey = `${ZOOM_TRACK_KEY}_${user.userId}_${categoryId}`;
+        const zoomsRaw = localStorage.getItem(userSpecificZoomKey);
         const zooms = zoomsRaw ? JSON.parse(zoomsRaw) : [];
 
         if (!zooms.includes(src)) {
           zooms.push(src);
-          localStorage.setItem(
-            `${ZOOM_TRACK_KEY}_${categoryId}`,
-            JSON.stringify(zooms)
-          );
+          localStorage.setItem(userSpecificZoomKey, JSON.stringify(zooms));
           setZoomCount(zooms.length);
 
-          if (checkAndCompleteLesson(categoryId, zooms.length)) {
+          if (checkAndCompleteLesson(categoryId, zooms.length, user.userId)) {
             setIsCompleted(true);
             alert(
               `🎉 Great job! You've viewed enough signs to complete "${categoryId}" automatically! Next lesson unlocked.`
@@ -113,10 +129,6 @@ const LessonCategoryPage = () => {
         console.error('Failed to track zoom', e);
       }
     }
-
-    // Always open zoom modal
-    setZoomSrc(src);
-    setZoomLabel(label);
   };
 
   const closeZoom = () => {
@@ -176,8 +188,15 @@ const LessonCategoryPage = () => {
       mode = 'family';
       break;
     default:
-      title = 'Lessons';
-      description = '';
+      // For dynamic categories, use the original category label if provided
+      if (categoryName) {
+        title = categoryName;
+      } else if (categoryId) {
+        title = categoryId.charAt(0).toUpperCase() + categoryId.slice(1).replace(/_/g, ' ');
+      } else {
+        title = 'Lessons';
+      }
+      description = `Learn ${title} signs created by our educators.`;
       mode = '';
   }
 
@@ -609,6 +628,7 @@ const LessonCategoryPage = () => {
           <BodySensationsPosters onZoom={trackZoom} />
         )}
         {mode === 'family' && <FamilyPosters onZoom={trackZoom} />}
+        {!mode && <DynamicSignPosters category={categoryName || categoryId} onZoom={trackZoom} />}
       </main>
 
       {zoomSrc && (
