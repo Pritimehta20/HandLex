@@ -53,5 +53,14 @@ const SummaryApi = {
         url: '/api/users/google-login',
         method: 'POST'
     },
+     lessonProgress: {
+        url: '/api/lesson/progress',
+        method: 'POST'
+    },
+    lessonProgressGet: {
+        url: '/api/lesson/progress',
+        method: 'GET'
+    }
+    ,
 }
 export default SummaryApi;

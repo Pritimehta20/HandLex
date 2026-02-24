@@ -1,7 +1,8 @@
 // src/pages/LessonCategoryPage.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../Provider/AuthContext';
+import { baseUrl } from '../Common/SummaryApi';
 import AlphabetPosters from '../Component/AlphabetPosters';
 import NumberPosters from '../Component/NumberPosters';
 import ColorsPosters from '../Component/ColorsPosters';
@@ -15,6 +16,7 @@ import DynamicSignPosters from '../Component/DynamicSignPosters';
 
 const STORAGE_KEY = 'lessonProgress';
 const ZOOM_TRACK_KEY = 'lessonZooms';
+const SYNC_KEY = 'lessonSync_v2'; 
 
 const LessonCategoryPage = () => {
   const navigate = useNavigate();
@@ -22,30 +24,57 @@ const LessonCategoryPage = () => {
   const location = useLocation();
   const query = new URLSearchParams(location.search);
   const categoryName = query.get('category') || null; // original category label from LessonsPage
-  const { user } = useAuth();
+const { user, token } = useAuth();  // 🔥 CHANGE: Add token
   const [zoomSrc, setZoomSrc] = useState(null);
   const [zoomLabel, setZoomLabel] = useState('');
   const [zoomCount, setZoomCount] = useState(0);
   const [isCompleted, setIsCompleted] = useState(false);
+  const [syncStatus, setSyncStatus] = useState('idle'); 
 
   // current user comes from AuthContext
 
   // Helper function to mark lesson complete (now inside component with access to userId)
-  const markLessonComplete = (catId, userId) => {
-    if (!userId) return;
-    try {
-      const userSpecificKey = `${STORAGE_KEY}_${userId}`;
-      const raw = localStorage.getItem(userSpecificKey);
-      const list = raw ? JSON.parse(raw) : [];
-      const safeList = Array.isArray(list) ? list : [];
-      if (!safeList.includes(catId)) {
-        const updated = [...safeList, catId];
-        localStorage.setItem(userSpecificKey, JSON.stringify(updated));
-      }
-    } catch (e) {
-      console.error('Failed to save lesson progress', e);
+// 🔥 REPLACE ENTIRE FUNCTION WITH THIS:
+const markLessonComplete = useCallback(async (catId, userId) => {
+  if (!userId) return false;
+  
+  try {
+    // 1. IMMEDIATE local save
+    const userSpecificKey = `${STORAGE_KEY}_${userId}`;
+    const raw = localStorage.getItem(userSpecificKey);
+    const list = raw ? JSON.parse(raw) : [];
+    const safeList = Array.isArray(list) ? list : [];
+    
+    if (!safeList.includes(catId)) {
+      const updated = [...safeList, catId];
+      localStorage.setItem(userSpecificKey, JSON.stringify(updated));
+      localStorage.setItem(`${SYNC_KEY}_${userId}`, Date.now().toString());
     }
-  };
+
+    // 2. SERVER BACKUP (optional - works without backend)
+    if (token) {
+      try {
+        await fetch(`${baseUrl}/api/lesson/progress`, {
+          method: 'POST',
+          headers: { 
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ 
+            userId, 
+            completedLessons: safeList.includes(catId) ? safeList : [...safeList, catId]
+          })
+        }).catch(e => console.warn('Server sync failed:', e));
+      } catch (e) {}
+    }
+
+    return true;
+  } catch (e) {
+    console.error('Save failed:', e);
+    return false;
+  }
+}, [token, baseUrl]);
+
 
   // Helper function to check and complete lesson
   const checkAndCompleteLesson = (catId, zoomCnt, userId) => {
@@ -71,65 +100,76 @@ const LessonCategoryPage = () => {
     return false;
   };
 
-  useEffect(() => {
-    if (!categoryId || !user || !user.userId) return;
+  // 🔥 NEW: Load + Sync Progress
+const loadProgress = useCallback(async () => {
+  if (!categoryId || !user?.userId) return;
 
-    try {
-      const userSpecificZoomKey = `${ZOOM_TRACK_KEY}_${user.userId}_${categoryId}`;
-      const zoomsRaw = localStorage.getItem(userSpecificZoomKey);
-      const zooms = zoomsRaw ? JSON.parse(zoomsRaw) : [];
-      setZoomCount(zooms.length);
+  try {
+    let completed = false;
+    let zooms = 0;
 
-      const userSpecificKey = `${STORAGE_KEY}_${user.userId}`;
-      const progressRaw = localStorage.getItem(userSpecificKey);
-      const completed = progressRaw ? JSON.parse(progressRaw) : [];
-      setIsCompleted(completed.includes(categoryId));
+    // 1. LOCAL STORAGE (main source)
+    const userSpecificZoomKey = `${ZOOM_TRACK_KEY}_${user.userId}_${categoryId}`;
+    const zoomsRaw = localStorage.getItem(userSpecificZoomKey);
+    const zoomList = zoomsRaw ? JSON.parse(zoomsRaw) : [];
+    zooms = Array.isArray(zoomList) ? zoomList.length : 0;
+    
+    const userSpecificKey = `${STORAGE_KEY}_${user.userId}`;
+    const progressRaw = localStorage.getItem(userSpecificKey);
+    const progressList = progressRaw ? JSON.parse(progressRaw) : [];
+    completed = Array.isArray(progressList) ? progressList.includes(categoryId) : false;
 
-      if (zooms.length > 0 && !completed.includes(categoryId)) {
-        const autoCompleted = checkAndCompleteLesson(categoryId, zooms.length, user.userId);
-        if (autoCompleted) {
-          setIsCompleted(true);
-          alert(
-            `🎉 Great job! You've viewed enough signs to complete "${categoryId}" automatically! Next lesson unlocked.`
-          );
-        }
-      }
-    } catch (e) {
-      console.error('Failed to load progress', e);
-    }
-  }, [categoryId, user]);
+    setIsCompleted(completed);
+    setZoomCount(zooms);
 
-  const trackZoom = (src, label) => {
-    // Always open zoom modal (allow anonymous users to zoom)
-    setZoomSrc(src);
-    setZoomLabel(label);
-
-    // Only track progress for authenticated users and when categoryId exists
-    if (!categoryId || !user || !user.userId) return;
-
-    if (!isCompleted) {
-      try {
-        const userSpecificZoomKey = `${ZOOM_TRACK_KEY}_${user.userId}_${categoryId}`;
-        const zoomsRaw = localStorage.getItem(userSpecificZoomKey);
-        const zooms = zoomsRaw ? JSON.parse(zoomsRaw) : [];
-
-        if (!zooms.includes(src)) {
-          zooms.push(src);
-          localStorage.setItem(userSpecificZoomKey, JSON.stringify(zooms));
-          setZoomCount(zooms.length);
-
-          if (checkAndCompleteLesson(categoryId, zooms.length, user.userId)) {
-            setIsCompleted(true);
-            alert(
-              `🎉 Great job! You've viewed enough signs to complete "${categoryId}" automatically! Next lesson unlocked.`
-            );
-          }
-        }
-      } catch (e) {
-        console.error('Failed to track zoom', e);
+    // 2. AUTO-COMPLETE CHECK
+    if (zooms > 0 && !completed) {
+      const autoComplete = checkAndCompleteLesson(categoryId, zooms, user.userId);
+      if (autoComplete) {
+        setIsCompleted(true);
+        setTimeout(() => alert(`🎉 Completed "${categoryId}" automatically!`), 100);
       }
     }
-  };
+
+    setSyncStatus('synced');
+  } catch (e) {
+    console.error('Load failed:', e);
+  }
+}, [categoryId, user]);
+
+useEffect(() => {
+  loadProgress();
+}, [loadProgress]);
+
+
+ const trackZoom = (src, label) => {
+  setZoomSrc(src);
+  setZoomLabel(label);
+
+  if (!categoryId || !user?.userId || isCompleted) return;
+
+  try {
+    const userSpecificZoomKey = `${ZOOM_TRACK_KEY}_${user.userId}_${categoryId}`;
+    const zoomsRaw = localStorage.getItem(userSpecificZoomKey);
+    const zooms = zoomsRaw ? JSON.parse(zoomsRaw) : [];
+
+    if (!zooms.includes(src)) {
+      const updatedZooms = [...zooms, src];  // ✅ NEW ARRAY
+      localStorage.setItem(userSpecificZoomKey, JSON.stringify(updatedZooms));
+      setZoomCount(updatedZooms.length);     // ✅ UPDATED COUNT
+
+      if (checkAndCompleteLesson(categoryId, updatedZooms.length, user.userId)) {
+        setIsCompleted(true);
+        setTimeout(() => {
+          alert(`🎉 Great job! You've viewed enough signs to complete "${categoryId}" automatically!`);
+        }, 100);
+      }
+    }
+  } catch (e) {
+    console.error('Failed to track zoom', e);
+  }
+};
+
 
   const closeZoom = () => {
     setZoomSrc(null);
@@ -586,6 +626,7 @@ const LessonCategoryPage = () => {
         <div className="lp-hero-text">
           <h1>{title}</h1>
           {description && <p>{description}</p>}
+          {syncStatus === 'syncing' && <p style={{fontSize:'0.85rem', opacity:0.7}}>🔄 Syncing...</p>}
         </div>
       </header>
 

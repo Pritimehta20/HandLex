@@ -1,10 +1,11 @@
 // src/pages/LessonsPage.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState , useCallback} from 'react';
 import { useNavigate } from 'react-router-dom';
 import { baseUrl } from '../Common/SummaryApi';
 import { useAuth } from '../Provider/AuthContext';
 
 const STORAGE_KEY = 'lessonProgress';
+const SYNC_KEY = 'lessonSync_v2';
 
 const categoryConfig = [
   {
@@ -85,8 +86,9 @@ const LessonsPage = () => {
   const navigate = useNavigate();
   const [completedIds, setCompletedIds] = useState([]);
   const [dynamicCategories, setDynamicCategories] = useState([]);
+  const [syncStatus, setSyncStatus] = useState('idle'); 
+const { user, token } = useAuth();  // 🔥 CHANGE: Add token
 
-  const { user } = useAuth();
 
   // derive unified categories list (static + dynamic) so unlock sequence is consistent
   const staticIds = categoryConfig.map(c => c.id);
@@ -94,58 +96,104 @@ const LessonsPage = () => {
   const allCategories = [...categoryConfig, ...newDynamic];
 
   // Fetch categories from API
-  useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const response = await fetch(`${baseUrl}/api/signs/categories/all`);
-        const data = await response.json();
-        if (data.categories && data.categories.length > 0) {
-          // Map API categories to lesson items
-          const mapped = data.categories.map((cat, idx) => {
-            // Generate a gradient color based on index
-            const colors = ['#6366F1', '#F97316', '#0EA5E9', '#22C55E', '#EC4899', '#06B6D4', '#EAB308', '#8B5CF6', '#10B981'];
-            const color = colors[idx % colors.length];
-            const name = typeof cat === 'string' ? cat : (cat.name || '');
-            const coverUrl = typeof cat === 'string' ? null : (cat.coverUrl || null);
+ // 🔥 NEW: Server + LocalStorage Hybrid Load
+useEffect(() => {
+  const syncProgress = async () => {
+    if (!user?.userId) {
+      console.log('⏭️ No user - skip sync');
+      return;
+    }
 
-            return {
-              id: name.toLowerCase().replace(/\s+/g, '_'),
-              label: name,
-              category: name,
-              desc: `Learn ${name} in sign language`,
-              cover: coverUrl ? `${baseUrl}${coverUrl}` : '/lessons/covers/alphabet-cover.png',
-              accent: color,
-              icon: '🎓'
-            };
-          });
-          setDynamicCategories(mapped);
-          console.log('Fetched categories:', mapped);
-        }
-      } catch (err) {
-        console.error('Error fetching categories:', err);
-      }
-    };
-    fetchCategories();
-  }, []);
+    console.log('🔄 Syncing lesson progress...');
+    setSyncStatus('syncing');
 
-  // current user comes from AuthContext
-
-  // Load user-specific lesson progress
-  useEffect(() => {
-    if (!user || !user.userId) return;
-    
     try {
+      let progress = [];
+
+      // 1. TRY LOCAL STORAGE FIRST (immediate)
       const userSpecificKey = `${STORAGE_KEY}_${user.userId}`;
       const raw = localStorage.getItem(userSpecificKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setCompletedIds(parsed);
+      
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            // Validate data
+            progress = parsed.filter(id => 
+              categoryConfig.some(c => c.id === id)
+            );
+            setCompletedIds(progress);
+          }
+        } catch (e) {
+          console.error('LocalStorage corrupted - clearing:', e);
+          localStorage.removeItem(userSpecificKey);
+        }
       }
+
+      // 2. OPTIONAL SERVER SYNC (future-proof)
+      if (token) {
+        try {
+          const serverRes = await fetch(`${baseUrl}/api/lesson/progress?userId=${user.userId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (serverRes.ok) {
+            const serverData = await serverRes.json();
+            if (serverData.completedLessons?.length > 0) {
+              setCompletedIds(serverData.completedLessons);
+              localStorage.setItem(userSpecificKey, JSON.stringify(serverData.completedLessons));
+            }
+          }
+        } catch (e) {
+          console.log('⚠️ Server sync failed - using local');
+        }
+      }
+
+      localStorage.setItem(`${SYNC_KEY}_${user.userId}`, Date.now().toString());
+      setSyncStatus('synced');
     } catch (e) {
-      console.error('Failed to read lesson progress', e);
+      console.error('Sync failed:', e);
+      setSyncStatus('error');
     }
-  }, [user]);
+  };
+  syncProgress();
+}, [user, token]);
+
+  // current user comes from AuthContext
+// Fetch categories from API (your original code)
+useEffect(() => {
+  const fetchCategories = async () => {
+    try {
+      const response = await fetch(`${baseUrl}/api/signs/categories/all`);
+      const data = await response.json();
+      if (data.categories && data.categories.length > 0) {
+        const mapped = data.categories.map((cat, idx) => {
+          const colors = ['#6366F1', '#F97316', '#0EA5E9', '#22C55E', '#EC4899', '#06B6D4', '#EAB308', '#8B5CF6', '#10B981'];
+          const color = colors[idx % colors.length];
+          const name = typeof cat === 'string' ? cat : (cat.name || '');
+          const coverUrl = typeof cat === 'string' ? null : (cat.coverUrl || null);
+
+          return {
+            id: name.toLowerCase().replace(/\s+/g, '_'),
+            label: name,
+            category: name,
+            desc: `Learn ${name} in sign language`,
+            cover: coverUrl ? `${baseUrl}${coverUrl}` : '/lessons/covers/alphabet-cover.png',
+            accent: color,
+            icon: '🎓'
+          };
+        });
+        setDynamicCategories(mapped);
+      }
+    } catch (err) {
+      console.error('Error fetching categories:', err);
+    }
+  };
+  fetchCategories();
+}, []);
+
+
+  // Load user-specific lesson progress
+
 
   const isUnlocked = (index) => {
     if (index === 0) return true;
@@ -392,7 +440,12 @@ const LessonsPage = () => {
         </button>
         <div className="lp-hero-text">
           <h1>Sign Lessons Library</h1>
-          <p>Tap a colorful card to explore fun sign lessons.</p>
+           <p style={{ margin: 0 }}>
+  {syncStatus === 'syncing' && '🔄 Syncing progress...'}
+  {syncStatus === 'synced' && '✅ Progress loaded'}
+  {syncStatus === 'error' && '📱 Using local progress'}
+  {syncStatus === 'idle' && 'Tap a colorful card to explore fun sign lessons.'}
+</p>
         </div>
       </header>
 

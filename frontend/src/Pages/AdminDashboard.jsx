@@ -485,12 +485,6 @@ const AdminDashboard = () => {
                         }}
                       />
                     ) : null}
-                    <div className="category-cover placeholder">
-                      <span style={{ fontSize: '2rem' }}>✨</span>
-                      <span style={{ fontSize: '0.8rem', display: 'block', marginTop: '4px' }}>
-                        {c.name[0]}
-                      </span>
-                    </div>
                     <div className="category-meta">
                       <div className="category-name">
                         <div style={{ fontSize: '1.1rem', fontWeight: '800' }}>{c.name}</div>
