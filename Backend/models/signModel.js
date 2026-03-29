@@ -8,7 +8,7 @@ const signSchema = new mongoose.Schema({
      // e.g., "HELLO"
     language: { 
         type: String, 
-        default: 'ISL' 
+        default: 'ASL' 
     },
      // Indian Sign Language (default)
     category: {

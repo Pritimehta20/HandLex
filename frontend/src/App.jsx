@@ -7,14 +7,17 @@ import CallProvider from "./Provider/CallProvider";
 function App() {
   // get current logged-in user (adjust if you already have auth context)
   let user = null;
-  const storedUser = localStorage.getItem("user");
-  if (storedUser) {
-    try {
-      user = JSON.parse(storedUser);
-    } catch (e) {
-      console.error("Failed to parse user from localStorage", e);
-    }
+const storedUser = localStorage.getItem("user");
+
+if (storedUser) {
+  try {
+    user = JSON.parse(storedUser);
+  } catch (e) {
+    console.error("Failed to parse user from localStorage", e);
+    localStorage.removeItem("user");
+    user = null;
   }
+}
 
   return (
     <GoogleOAuthProvider clientId="144058274170-8i3k6nneb9s97dlhhl8ii8lmoas3kvj0.apps.googleusercontent.com">  {/* 👈 WRAP EVERYTHING */}

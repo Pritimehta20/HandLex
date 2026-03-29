@@ -104,59 +104,67 @@ useEffect(() => {
       return;
     }
 
-    console.log('🔄 Syncing lesson progress...');
     setSyncStatus('syncing');
 
     try {
       let progress = [];
 
-      // 1. TRY LOCAL STORAGE FIRST (immediate)
-      const userSpecificKey = `${STORAGE_KEY}_${user.userId}`;
-      const raw = localStorage.getItem(userSpecificKey);
-      
+      // 1️⃣ SERVER FIRST (true source of truth)
+      if (token) {
+        const serverRes = await fetch(
+          `${baseUrl}/api/lesson/progress?userId=${user.userId}`,
+          {
+            headers: { 'Authorization': `Bearer ${token}` },
+          }
+        );
+
+        if (serverRes.ok) {
+          const serverData = await serverRes.json();
+          if (Array.isArray(serverData.completedLessons)) {
+            progress = serverData.completedLessons;
+            setCompletedIds(progress);
+
+            // Cache to localStorage
+            const userKey = `${STORAGE_KEY}_${user.userId}`;
+            localStorage.setItem(userKey, JSON.stringify(progress));
+            localStorage.setItem(`${SYNC_KEY}_${user.userId}`, Date.now().toString());
+            setSyncStatus('synced');
+            return; // exit here; server wins
+          }
+        }
+      }
+
+      // 2️⃣ ONLY if server failed / no token, use localStorage
+      const userKey = `${STORAGE_KEY}_${user.userId}`;
+      const raw = localStorage.getItem(userKey);
+
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
-            // Validate data
-            progress = parsed.filter(id => 
-              categoryConfig.some(c => c.id === id)
+            const validIds = parsed.filter(id =>
+              categoryConfig.some(c => c.id === id) ||
+              dynamicCategories.some(c => c.id === id)
             );
+            progress = validIds;
             setCompletedIds(progress);
           }
         } catch (e) {
-          console.error('LocalStorage corrupted - clearing:', e);
-          localStorage.removeItem(userSpecificKey);
+          console.error('Corrupted localStorage - clearing:', e);
+          localStorage.removeItem(userKey);
         }
       }
 
-      // 2. OPTIONAL SERVER SYNC (future-proof)
-      if (token) {
-        try {
-          const serverRes = await fetch(`${baseUrl}/api/lesson/progress?userId=${user.userId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (serverRes.ok) {
-            const serverData = await serverRes.json();
-            if (serverData.completedLessons?.length > 0) {
-              setCompletedIds(serverData.completedLessons);
-              localStorage.setItem(userSpecificKey, JSON.stringify(serverData.completedLessons));
-            }
-          }
-        } catch (e) {
-          console.log('⚠️ Server sync failed - using local');
-        }
-      }
-
-      localStorage.setItem(`${SYNC_KEY}_${user.userId}`, Date.now().toString());
-      setSyncStatus('synced');
+      setSyncStatus(token ? 'error' : 'synced');
     } catch (e) {
       console.error('Sync failed:', e);
       setSyncStatus('error');
     }
   };
+
   syncProgress();
-}, [user, token]);
+}, [user, token, baseUrl]);
+
 
   // current user comes from AuthContext
 // Fetch categories from API (your original code)
@@ -195,19 +203,8 @@ useEffect(() => {
   // Load user-specific lesson progress
 
 
-  const isUnlocked = (index) => {
-    if (index === 0) return true;
-    const prev = allCategories[index - 1];
-    if (!prev) return false;
-    return completedIds.includes(prev.id);
-  };
 
   const handleOpenCategory = (cat, index, unlocked) => {
-    if (!unlocked) {
-      alert('Please complete the previous chapter to unlock this lesson.');
-      return;
-    }
-    // Pass the original category label as a query param so backend lookups work
     const categoryName = cat.category || cat.label || cat.id;
     navigate(`/lesson/${cat.id}?category=${encodeURIComponent(categoryName)}`);
   };
@@ -459,32 +456,15 @@ useEffect(() => {
           const allCategories = [...categoryConfig, ...newDynamic];
           
           return allCategories.map((cat, index) => {
-            // For dynamic categories, consider them unlocked after completing first 3 static lessons
-            let unlocked;
-            if (staticIds.includes(cat.id)) {
-              // Static category: use original unlock logic
-              unlocked = isUnlocked(index);
-            } else {
-              // Dynamic category: unlock after completing first few static lessons
-              const staticCompletedCount = completedIds.filter(id => staticIds.includes(id)).length;
-              unlocked = staticCompletedCount >= 2; // After completing 2+ static lessons
-            }
-            
             const isDone = completedIds.includes(cat.id);
 
             return (
               <article
                 key={cat.id}
-                className={`lp-cat-card${unlocked ? '' : ' locked'}`}
-                onClick={() => handleOpenCategory(cat, index, unlocked)}
+                className='lp-cat-card'
+                onClick={() => handleOpenCategory(cat, index, true)}
               >
-                {!unlocked && (
-                  <div className="lp-cat-lock-badge">
-                    <span>🔒</span>
-                    <span>Complete previous</span>
-                  </div>
-                )}
-                {unlocked && isDone && (
+                {isDone && (
                   <div className="lp-cat-lock-badge done">
                     <span>✅</span>
                     <span>Finished</span>
@@ -508,11 +488,9 @@ useEffect(() => {
                   <div className="lp-cat-desc">{cat.desc}</div>
                   <div className="lp-cat-footer">
                     <span>
-                      {unlocked
-                        ? isDone
+                      {isDone
                           ? 'Replay chapter →'
-                          : 'Tap to start →'
-                        : 'Locked until previous'}
+                          : 'Tap to start →'}
                     </span>
                     <span>Made for kids</span>
                   </div>

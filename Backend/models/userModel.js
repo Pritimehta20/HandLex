@@ -26,7 +26,7 @@ const userSchema = new mongoose.Schema({
         ref: "Sign" 
     }],
   completedLessons: [{ 
-    type: mongoose.Schema.Types.ObjectId, 
+    type: String,  // Storing lesson IDs as strings for flexibility
     ref: "Lesson" 
 }],
     preferredLanguage: { 

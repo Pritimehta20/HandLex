@@ -36,113 +36,116 @@ const { user, token } = useAuth();  // 🔥 CHANGE: Add token
   // Helper function to mark lesson complete (now inside component with access to userId)
 // 🔥 REPLACE ENTIRE FUNCTION WITH THIS:
 const markLessonComplete = useCallback(async (catId, userId) => {
-  if (!userId) return false;
-  
+  if (!userId || !token) return false;
+
   try {
-    // 1. IMMEDIATE local save
-    const userSpecificKey = `${STORAGE_KEY}_${userId}`;
-    const raw = localStorage.getItem(userSpecificKey);
-    const list = raw ? JSON.parse(raw) : [];
-    const safeList = Array.isArray(list) ? list : [];
-    
-    if (!safeList.includes(catId)) {
-      const updated = [...safeList, catId];
-      localStorage.setItem(userSpecificKey, JSON.stringify(updated));
-      localStorage.setItem(`${SYNC_KEY}_${userId}`, Date.now().toString());
+    // 1. SERVER FIRST (true source of truth)
+    const res = await fetch(`${baseUrl}/api/lesson/progress`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ userId, completedLessons: [catId] }),
+    });
+
+    let serverSuccess = false;
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.completedLessons)) {
+        serverSuccess = true;
+        const userKey = `${STORAGE_KEY}_${userId}`;
+        localStorage.setItem(userKey, JSON.stringify(data.completedLessons));
+        localStorage.setItem(`${SYNC_KEY}_${userId}`, Date.now().toString());
+      }
     }
 
-    // 2. SERVER BACKUP (optional - works without backend)
-    if (token) {
-      try {
-        await fetch(`${baseUrl}/api/lesson/progress`, {
-          method: 'POST',
-          headers: { 
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ 
-            userId, 
-            completedLessons: safeList.includes(catId) ? safeList : [...safeList, catId]
-          })
-        }).catch(e => console.warn('Server sync failed:', e));
-      } catch (e) {}
+    // 2. If server failed, fall back to local‑only update
+    if (!serverSuccess) {
+      const userKey = `${STORAGE_KEY}_${userId}`;
+      const raw = localStorage.getItem(userKey);
+      const list = raw ? JSON.parse(raw) : [];
+      const safeList = Array.isArray(list) ? list : [];
+      if (!safeList.includes(catId)) {
+        const updated = [...safeList, catId];
+        localStorage.setItem(userKey, JSON.stringify(updated));
+        localStorage.setItem(`${SYNC_KEY}_${userId}`, Date.now().toString());
+      }
     }
 
     return true;
   } catch (e) {
     console.error('Save failed:', e);
-    return false;
+    // Still try to keep local state
+    const userKey = `${STORAGE_KEY}_${userId}`;
+    const raw = localStorage.getItem(userKey);
+    const list = raw ? JSON.parse(raw) : [];
+    const safeList = Array.isArray(list) ? list : [];
+    if (!safeList.includes(catId)) {
+      const updated = [...safeList, catId];
+      localStorage.setItem(userKey, JSON.stringify(updated));
+    }
+    return true;
   }
 }, [token, baseUrl]);
 
 
+
   // Helper function to check and complete lesson
-  const checkAndCompleteLesson = (catId, zoomCnt, userId) => {
-    const expectedItems = {
-      alphabet: 26,
-      numbers: 10,
-      common_interactions: 11,
-      colors: 11,
-      fruits: 12,
-      emotions: 8,
-      greetings: 7,
-      sensations: 13,
-      family: 9,
-    };
-
-    const expected = expectedItems[catId] || 5; // Default to 5 for dynamic categories
-    const threshold = Math.ceil(expected * 0.7);
-
-    if (zoomCnt >= threshold) {
-      markLessonComplete(catId, userId);
-      return true;
-    }
-    return false;
+const checkAndCompleteLesson = async (catId, zoomCnt, userId) => {
+  const expectedItems = {
+    alphabet: 26,
+    numbers: 10,
+    common_interactions: 11,
+    colors: 11,
+    fruits: 12,
+    emotions: 8,
+    greetings: 7,
+    sensations: 13,
+    family: 9,
   };
+
+  const expected = expectedItems[catId] || 5;
+  const threshold = Math.ceil(expected * 0.7);
+
+  if (zoomCnt >= threshold) {
+    const completed = await markLessonComplete(catId, userId);
+    if (completed) {
+      setIsCompleted(true);
+      setTimeout(() => alert(`🎉 Completed "${categoryId}" automatically!`), 100);
+    }
+    return true;
+  }
+  return false;
+};
+
 
   // 🔥 NEW: Load + Sync Progress
 const loadProgress = useCallback(async () => {
   if (!categoryId || !user?.userId) return;
 
   try {
-    let completed = false;
-    let zooms = 0;
-
-    // 1. LOCAL STORAGE (main source)
+    // Only load ZOOMS from localStorage; completion is server‑driven
     const userSpecificZoomKey = `${ZOOM_TRACK_KEY}_${user.userId}_${categoryId}`;
     const zoomsRaw = localStorage.getItem(userSpecificZoomKey);
-    const zoomList = zoomsRaw ? JSON.parse(zoomsRaw) : [];
-    zooms = Array.isArray(zoomList) ? zoomList.length : 0;
-    
-    const userSpecificKey = `${STORAGE_KEY}_${user.userId}`;
-    const progressRaw = localStorage.getItem(userSpecificKey);
-    const progressList = progressRaw ? JSON.parse(progressRaw) : [];
-    completed = Array.isArray(progressList) ? progressList.includes(categoryId) : false;
+    const zooms = zoomsRaw ? JSON.parse(zoomsRaw) : [];
+    setZoomCount(Array.isArray(zooms) ? zooms.length : 0);
 
-    setIsCompleted(completed);
-    setZoomCount(zooms);
-
-    // 2. AUTO-COMPLETE CHECK
-    if (zooms > 0 && !completed) {
-      const autoComplete = checkAndCompleteLesson(categoryId, zooms, user.userId);
-      if (autoComplete) {
-        setIsCompleted(true);
-        setTimeout(() => alert(`🎉 Completed "${categoryId}" automatically!`), 100);
-      }
-    }
-
+    // isCompleted comes from server‑synced state (via LessonsPage), not here
     setSyncStatus('synced');
   } catch (e) {
     console.error('Load failed:', e);
+    setSyncStatus('error');
   }
 }, [categoryId, user]);
+
 
 useEffect(() => {
   loadProgress();
 }, [loadProgress]);
 
 
- const trackZoom = (src, label) => {
+const trackZoom = async (src, label) => {
   setZoomSrc(src);
   setZoomLabel(label);
 
@@ -152,23 +155,19 @@ useEffect(() => {
     const userSpecificZoomKey = `${ZOOM_TRACK_KEY}_${user.userId}_${categoryId}`;
     const zoomsRaw = localStorage.getItem(userSpecificZoomKey);
     const zooms = zoomsRaw ? JSON.parse(zoomsRaw) : [];
+    const updatedZooms = !zooms.includes(src) ? [...zooms, src] : zooms;
 
-    if (!zooms.includes(src)) {
-      const updatedZooms = [...zooms, src];  // ✅ NEW ARRAY
+    if (updatedZooms.length !== zooms.length) {
       localStorage.setItem(userSpecificZoomKey, JSON.stringify(updatedZooms));
-      setZoomCount(updatedZooms.length);     // ✅ UPDATED COUNT
+      setZoomCount(updatedZooms.length);
 
-      if (checkAndCompleteLesson(categoryId, updatedZooms.length, user.userId)) {
-        setIsCompleted(true);
-        setTimeout(() => {
-          alert(`🎉 Great job! You've viewed enough signs to complete "${categoryId}" automatically!`);
-        }, 100);
-      }
+      await checkAndCompleteLesson(categoryId, updatedZooms.length, user.userId);
     }
   } catch (e) {
     console.error('Failed to track zoom', e);
   }
 };
+
 
 
   const closeZoom = () => {

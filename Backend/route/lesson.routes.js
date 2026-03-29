@@ -1,10 +1,12 @@
 // routes/lesson.routes.js
 import { saveLessonProgress, getLessonProgress } from '../controllers/lesson.controller.js';
 import { verifyUser } from '../middleware/auth.js';
+import { Router } from 'express';
 
-const router = express.Router();
 
-router.post('/progress', verifyUser, saveLessonProgress);
-router.get('/progress', verifyUser, getLessonProgress);
+const Lessonrouter = Router();
 
-export default router;
+Lessonrouter.post('/progress', verifyUser, saveLessonProgress);
+Lessonrouter.get('/progress', verifyUser, getLessonProgress);
+
+export default Lessonrouter;

@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from 'react-router-dom';
 import MainSidebar from "../Component/MainSidebar";
-
+import { baseUrl } from "../Common/SummaryApi";
 // simple hook to animate numbers (for the practice ring)
 const useAnimatedValue = (target, duration = 600) => {
   const [value, setValue] = useState(0);
@@ -77,6 +77,51 @@ const Dashboard = () => {
 
   // ✅ QUIZ HISTORY - NEW STATE
   const [quizHistoryData, setQuizHistoryData] = useState([]);
+  // 👇 makes sure `baseUrl` is imported; if not, use your actual base (e.g., 'http://localhost:8080')
+const fetchDashboardQuizHistory = async () => {
+  if (!user?.userId) return;
+
+  try {
+    const res = await fetch(`${baseUrl}/api/quiz/results?userId=${user.userId}`, {
+      headers: {
+        Authorization: `Bearer ${localStorage.getItem('authToken')}`,
+      },
+    });
+    const data = await res.json();
+
+    if (!data.success || !data.results?.length) {
+      setQuizHistoryData([]);
+      return;
+    }
+
+    const dbHistory = data.results
+      .map(r => ({
+        id: r._id,
+        date: new Date(r.createdAt).toLocaleString('en-IN'),
+        percentage: r.percentage,
+        score: r.score,
+        total: r.total,
+        grade: r.grade,
+        completedAt: new Date(r.createdAt).toLocaleString('en-IN', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+      }))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+    setQuizHistoryData(dbHistory);
+  } catch (err) {
+    console.error('Failed to load quiz history from DB:', err);
+    setQuizHistoryData([]);
+  }
+};
+useEffect(() => {
+  fetchDashboardQuizHistory();
+}, [user?.userId]);
+
+
 
 // ✅ NEWEST QUIZ FIRST
 const lastQuizResult = quizHistoryData.length > 0 ? quizHistoryData[0] : null;
@@ -101,43 +146,6 @@ const lastQuizResult = quizHistoryData.length > 0 ? quizHistoryData[0] : null;
 
   // ✅ QUIZ HISTORY LOADING
   // ✅ FIXED: QUIZ HISTORY with SORTING + REAL-TIME UPDATES
-useEffect(() => {
-  if (!user) return;
-
-  const userId = user?.userId || user?._id || user?.id || 'guest';
-  const quizHistoryKey = `quizHistory_${userId}`;
-  
-  const loadQuizHistory = () => {
-    try {
-      console.log('🔍 Loading quiz history for:', userId);
-      const raw = localStorage.getItem(quizHistoryKey);
-      const history = raw ? JSON.parse(raw) : [];
-      
-      // ✅ SORT NEWEST FIRST
-      const sortedHistory = Array.isArray(history) 
-        ? history.sort((a, b) => new Date(b.date) - new Date(a.date))
-        : [];
-        
-      console.log('📊 Loaded & sorted:', sortedHistory.length, 'quizzes');
-      setQuizHistoryData(sortedHistory);
-    } catch (e) {
-      console.error("❌ Quiz history error:", e);
-      setQuizHistoryData([]);
-    }
-  };
-
-  loadQuizHistory();
-  
-  // ✅ RELOAD ON NEW QUIZ RESULT (real-time sync)
-  const handleQuizSaved = () => loadQuizHistory();
-  window.addEventListener('quizResultSaved', handleQuizSaved);
-  window.addEventListener('storage', loadQuizHistory);
-  
-  return () => {
-    window.removeEventListener('quizResultSaved', handleQuizSaved);
-    window.removeEventListener('storage', loadQuizHistory);
-  };
-}, [user?.userId]);
 
 
   useEffect(() => {

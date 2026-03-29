@@ -11,6 +11,8 @@ import frouter from "./route/friendRoute.js";
 import path from 'path';
 import { existsSync, readdirSync } from 'fs';
 import quizRouter from "./route/quiz.js";
+import Lessonrouter from "./route/lesson.routes.js";
+import practicesignrouter from "./route/practicesign.js";
 
 const app = express();
 
@@ -80,6 +82,8 @@ app.use('/api/friends', frouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/signs', signRouter);
 app.use('/api/quiz', quizRouter);
+app.use('/api/lesson', Lessonrouter);
+app.use('/api', practicesignrouter);
 
 // ✅ PROXY ROUTES (unchanged)
 app.get('/api/sign-status', async (req, res) => {

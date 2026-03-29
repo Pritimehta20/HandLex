@@ -62,5 +62,33 @@ const SummaryApi = {
         method: 'GET'
     }
     ,
+     generateQuiz: {
+    url: '/api/quiz/generate',
+    method: 'POST',
+  },
+  submitQuiz: {
+    url: '/api/quiz/submit',
+    method: 'POST',
+  },
+  getQuizResults: {
+    url: '/api/quiz/results',
+    method: 'GET',
+  },
+ getGlobalLeaderboard: 
+ { 
+  url: '/api/quiz/global-leaderboard', 
+  method: 'GET' 
+},
+ savePracticeSummary: {
+    url: '/api/practice-summary',
+    method: 'POST',
+  },
+
+  getPracticeSummary: {
+    url: '/api/practice-summary',
+    method: 'GET',
+  },
+
+
 }
 export default SummaryApi;

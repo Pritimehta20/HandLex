@@ -3,7 +3,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SessionProgressBar from '../Component/SessionProgressBar';
 import PracticeSummary from '../Component/PracticeSummary';
-
+import { baseUrl } from '../Common/SummaryApi.js';
+import SummaryApi from '../Common/SummaryApi.js';
 const SESSION_SIZE = 5;
 const PASS_THRESHOLD = 70;
 
@@ -65,12 +66,19 @@ const PracticeSign = () => {
   const [hint, setHint] = useState('');
   const [skippedIds, setSkippedIds] = useState([]);
   const [user, setUser] = useState(null);
-
+  const [sessionCompleted, setSessionCompleted] = useState(false);
+  const summarySavedRef = useRef(false);
   // 1. Get User Context
   useEffect(() => {
     const storedUser = localStorage.getItem("user");
-    if (storedUser) setUser(JSON.parse(storedUser));
-  }, []);
+
+    if (storedUser) {
+    const parsedUser = JSON.parse(storedUser);
+    setUser(parsedUser);
+  } else {
+    setUser(null); // explicitly set null
+  }
+}, []);
 
   // 2. Video Feed
   useEffect(() => {
@@ -102,12 +110,16 @@ const PracticeSign = () => {
         }
 
         const shuffled = shuffleArray(filtered).slice(0, SESSION_SIZE);
+        setSessionCompleted(false);
+summarySavedRef.current = false;
         setSessionTargets(shuffled);
         setSessionScores(shuffled.map(t => ({
           id: t.id, label: t.label, score: 0, handScore: 0, stabilityScore: 0, angleScore: 0
         })));
         
-        if (shuffled.length > 0) selectTask(shuffled[0]);
+        if (shuffled.length > 0) {
+          setSessionIndex(0);
+          selectTask(shuffled[0]);}
       } catch (err) { console.error("Error loading tasks:", err); }
     };
     loadTasks();
@@ -146,18 +158,23 @@ const PracticeSign = () => {
   }, []);
 
   // 5. Auto-Advance Logic
-  useEffect(() => {
-    if (score >= PASS_THRESHOLD && currentTask) {
-      const idx = sessionTargets.findIndex(t => t.id === currentTask.id);
-      if (idx !== -1 && sessionTargets[idx + 1]) {
-        const timer = setTimeout(() => {
-          setSessionIndex(idx + 1);
-          selectTask(sessionTargets[idx + 1]);
-        }, 1200);
-        return () => clearTimeout(timer);
-      }
+ useEffect(() => {
+  if (score < PASS_THRESHOLD || !currentTask || sessionCompleted) return;
+
+  const idx = sessionTargets.findIndex(t => t.id === currentTask.id);
+  if (idx === -1) return;
+
+  const timer = setTimeout(() => {
+    if (idx === sessionTargets.length - 1) {
+      setSessionCompleted(true);
+    } else {
+      setSessionIndex(idx + 1);
+      selectTask(sessionTargets[idx + 1]);
     }
-  }, [score, currentTask, sessionTargets]);
+  }, 1200);
+
+  return () => clearTimeout(timer);
+}, [score, currentTask, sessionTargets, sessionCompleted]);
 
   const selectTask = (task) => {
     setCurrentTask(task);
@@ -166,38 +183,125 @@ const PracticeSign = () => {
   };
 
   const skipCurrentSign = () => {
-    if (!currentTask) return;
-    setSkippedIds(prev => [...prev, currentTask.id]);
-    const idx = sessionTargets.findIndex(t => t.id === currentTask.id);
-    if (sessionTargets[idx + 1]) {
-      setSessionIndex(idx + 1);
-      selectTask(sessionTargets[idx + 1]);
+  if (!currentTask || sessionCompleted) return;
+
+  setSkippedIds(prev => [...prev, currentTask.id]);
+
+  const idx = sessionTargets.findIndex(t => t.id === currentTask.id);
+  if (idx === -1) return;
+
+  if (idx === sessionTargets.length - 1) {
+    setSessionCompleted(true);
+  } else {
+    setSessionIndex(idx + 1);
+    selectTask(sessionTargets[idx + 1]);
+  }
+};
+
+  const isSessionFinished = sessionCompleted;
+
+useEffect(() => {
+  const loadPreviousSummary = async () => {
+    if (!user?.userId) {
+      console.warn('No userId for loading summary');
+      return;
+    }
+
+    try {
+      console.log('Loading summary for userId:', user.userId);
+      const res = await fetch(`http://localhost:8080/api/practice-summary/${user.userId}`);
+      const data = await res.json();
+      console.log('Load summary response:', data);
+
+      if (data.success && data.summary) {
+        const userKey = `practiceWeakSummary_${user.userId}`;
+        localStorage.setItem(userKey, JSON.stringify(data.summary));
+
+        const historyKey = `practiceSummaryHistory_${user.userId}`;
+        const historyRaw = localStorage.getItem(historyKey);
+        const history = historyRaw ? JSON.parse(historyRaw) : [];
+        const alreadyExists = history.some(
+          (item) => item.lastUpdated === data.summary.lastUpdated
+        );
+
+        if (!alreadyExists) {
+          const updated = [data.summary, ...history].slice(0, 20);
+          localStorage.setItem(historyKey, JSON.stringify(updated));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load previous practice summary:', err);
     }
   };
 
-  const isSessionFinished = sessionTargets.length > 0 && 
-    sessionIndex === sessionTargets.length - 1 && 
-    (score >= PASS_THRESHOLD || skippedIds.includes(currentTask?.id));
+
+   if (user?.userId) {
+    loadPreviousSummary();
+  }
+}, [user]);
+
 
   // Save Summary on finish
-  // Around line 315-325, update the save summary effect:
+useEffect(() => {
+  if (!isSessionFinished || !user || !user.userId || sessionScores.length === 0) return;
+  if (summarySavedRef.current) return;
+  summarySavedRef.current = true;
+  const summary = buildWeakAreasSummary(sessionScores, skippedIds);
+  if (!summary)  {
+  summarySavedRef.current = false;
+  return;
+}
 
-  // Save Summary on finish
-  useEffect(() => {
-    if (isSessionFinished && user) {
-      const summary = buildWeakAreasSummary(sessionScores, skippedIds);
-      const userKey = `practiceWeakSummary_${user.userId}`;
-      localStorage.setItem(userKey, JSON.stringify(summary));
+  console.log('💾 PRACTICE SUMMARY FINISHED: triggering DB save');
+  console.log('👤 user object:', user);
+  console.log('📦 summary payload:', {
+    userId: user?.userId,
+    avgScore: summary.avgScore,
+    weakSigns: summary.weakSigns,
+    skippedSigns: summary.skippedSigns,
+    lastUpdated: summary.lastUpdated,
+  });
 
-      // Also save to history
-      const historyKey = `practiceSummaryHistory_${user.userId}`;
-      const historyRaw = localStorage.getItem(historyKey);
-      const history = historyRaw ? JSON.parse(historyRaw) : [];
-      
-      const updated = [summary, ...history].slice(0, 10); // Keep last 10
-      localStorage.setItem(historyKey, JSON.stringify(updated));
-    }
-  }, [isSessionFinished, user]);
+  const userKey = `practiceWeakSummary_${user.userId}`;
+  localStorage.setItem(userKey, JSON.stringify(summary));
+
+  const historyKey = `practiceSummaryHistory_${user.userId}`;
+  const historyRaw = localStorage.getItem(historyKey);
+  const history = historyRaw ? JSON.parse(historyRaw) : [];
+  const updated = [summary, ...history].slice(0, 20);
+  localStorage.setItem(historyKey, JSON.stringify(updated));
+
+  fetch('http://localhost:8080/api/practice-summary', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      userId: user?.userId,
+      avgScore: summary.avgScore,
+      weakSigns: summary.weakSigns,
+      skippedSigns: summary.skippedSigns,
+      lastUpdated: summary.lastUpdated,
+    }),
+  })
+    .then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      console.log('🗄 save response status:', res.status);
+      console.log('🗄 save response body:', data);
+
+      if (!res.ok) {
+        throw new Error(data?.error || `HTTP ${res.status}`);
+      }
+
+      return data;
+    })
+    .then((data) => {
+      console.log('✅ Practice summary saved in DB:', data);
+    })
+    .catch((err) => {
+      console.error('❌ Failed to save practice summary:', err);
+    });
+}, [isSessionFinished, user, sessionScores, skippedIds]);
   return (
     <>
       <style>{`

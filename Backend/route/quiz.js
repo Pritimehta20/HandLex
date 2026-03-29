@@ -6,7 +6,9 @@ import {
   getLessons, 
   searchSigns, 
   getCategory,
-  hardcodedSigns  // ✅ Import signs data directly
+  hardcodedSigns,  // ✅ Import signs data directly
+  getQuizResults,
+  getGlobalLeaderboard
 } from '../controllers/quizController.js';
 
 const router = express.Router();
@@ -124,6 +126,8 @@ router.post('/submit', submitQuiz);
 router.get('/lessons', getLessons);        // 🎯 Frontend expects THIS
 router.get('/search', searchSigns);
 router.get('/category/:lesson', getCategory);
+router.get('/results', getQuizResults); 
+router.get('/global-leaderboard', getGlobalLeaderboard);
 
 // 🔍 Optional: Additional quiz endpoints
 router.get('/stats', getLessons);          // Reuse lessons for stats

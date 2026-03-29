@@ -2,7 +2,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../Provider/AuthContext';
-import { baseUrl } from '../Common/SummaryApi';
+import { baseUrl} from '../Common/SummaryApi.js';
+import SummaryApi from '../Common/SummaryApi.js';
 import './SignQuiz.css';
 import { FaWhatsapp } from 'react-icons/fa';
 
@@ -28,7 +29,8 @@ const SignQuiz = () => {
   const [userRank, setUserRank] = useState(null);
   const [noLessonsCompleted, setNoLessonsCompleted] = useState(false);
   const [userName, setUserName] = useState('Student');
-
+  const [dbHistory, setDbHistory] = useState([]);
+  const [selectedAnswers, setSelectedAnswers] = useState([]);
   const IMAGE_BASE_URL = 'http://localhost:8080';
 
   // ✅ FIXED: Save BOTH Global + Personal History
@@ -96,6 +98,46 @@ const SignQuiz = () => {
       console.error('Save failed:', error);
     }
   };
+  
+const fetchResultsFromDb = async (limit = 3) => {
+  if (!user?.userId) return [];
+
+  try {
+    const res = await fetch(`${baseUrl}${SummaryApi.getQuizResults.url}?userId=${user.userId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await res.json();
+    if (!data.success || !data.results?.length) return [];
+
+    return data.results
+      .map(r => ({
+        id: r._id,
+        completedAt: new Date(r.createdAt).toLocaleString('en-IN', {
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        score: r.score,
+        percentage: r.percentage,
+        total: r.total,
+        lessons: 1, // you can enrich this later if needed
+      }))
+      .sort((a, b) => b.score - a.score) // sort by best score
+      .slice(0, limit);
+  } catch (err) {
+    console.error('Failed to fetch quiz results from DB:', err);
+    return [];
+  }
+};
+
+useEffect(() => {
+  const loadHistory = async () => {
+    const history = await fetchResultsFromDb();
+    setDbHistory(history);
+  };
+  if (user?.userId) loadHistory();
+}, [user, token]);
 
   const fetchLeaderboard = () => {
     try {
@@ -172,14 +214,17 @@ const SignQuiz = () => {
     try {
       setLoading(true);
       setShowResults(false);
-      const response = await fetch(`${baseUrl}/api/quiz/generate`, {
-        method: 'POST',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ completedLessons, maxQuestions: 15 })
-      });
+      const response = await fetch(
+  `${baseUrl}${SummaryApi.generateQuiz.url}`,
+  {
+    method: SummaryApi.generateQuiz.method,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ completedLessons, maxQuestions: 15 }),
+  }
+);
       
       const quizData = await response.json();
       if (!quizData.questions || quizData.questions.length === 0) {
@@ -193,6 +238,7 @@ const SignQuiz = () => {
       setCurrentQuestion(0);
       setScore(0);
       setAnsweredCorrectly([]);
+      setSelectedAnswers([]);
       setSelectedAnswer(null);
       setFeedback('');
     } catch (err) {
@@ -216,14 +262,20 @@ const SignQuiz = () => {
     if (selectedAnswer !== null || isAnimating) return;
     setIsAnimating(true);
     setSelectedAnswer(answer);
-    const isCorrect = answer === quiz.questions[currentQuestion].correctAnswer;
+    const currentQ = quiz.questions[currentQuestion];
+  const isCorrect = answer === currentQ.correctAnswer;
     
     setAnsweredCorrectly(prev => {
       const newArray = [...prev];
       newArray[currentQuestion] = isCorrect;
       return newArray;
     });
-    
+    setSelectedAnswers(prev => {  // ✅ Track actual selection
+    const newArray = [...prev];
+    newArray[currentQuestion] = answer;
+    return newArray;
+  });
+
     if (isCorrect) {
       setScore(prev => prev + 1);
       setFeedback('✅ Correct!');
@@ -244,18 +296,19 @@ const SignQuiz = () => {
     }
   };
 
-  const calculateAnalysis = () => {
-    const percentage = Math.round((score / 15) * 100);
-    const breakdown = {};
+  const calculateAnalysis =  async() => {
+    const finalScore = answeredCorrectly.filter(v => v === true).length;
+  const percentage = Math.round((finalScore / 15) * 100);
+  const breakdown = {};
 
     quiz.questions.forEach((q, i) => {
       if (!breakdown[q.lesson]) breakdown[q.lesson] = { correct: 0, total: 0 };
       breakdown[q.lesson].total += 1;
-      if (answeredCorrectly[i]) breakdown[q.lesson].correct += 1;
+      if (answeredCorrectly[i]=== true) breakdown[q.lesson].correct += 1;
     });
 
     const analysisData = {
-      percentage, score, total: 15,
+      percentage, score:finalScore, total: 15,
       grade: getGrade(percentage),
       message: getMessage(percentage),
       breakdown: Object.entries(breakdown).map(([lesson, stats]) => ({
@@ -274,8 +327,48 @@ const SignQuiz = () => {
     }));
 
     setAnalysis(analysisData);
-    saveQuizResult(analysisData); // ✅ NOW SAVES HISTORY TOO!
+    saveQuizResult(analysisData); 
+    
+     if (user?.userId) {
+    try {
+      const res = await fetch(
+  `${baseUrl}${SummaryApi.submitQuiz.url}`,
+  {
+    method: SummaryApi.submitQuiz.method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      userId: user.userId,
+      lesson: 'multi-lesson',
+      completedLessons,
+      userName: user?.name || user?.displayName || 'Student',
+      answers: quiz.questions.map((q, idx) => ({
+        questionId: q.questionId,
+        selectedAnswer: selectedAnswers[idx] || null,
+        correctAnswer: q.correctAnswer,
+        isCorrect: answeredCorrectly[idx] ===true,
+        lesson: q.lesson,
+      })),
+    }),
+  }
+);
+
+      const data = await res.json();
+      console.log('DB submission response:', data);
+    } catch (err) {
+      console.error('Failed to submit quiz:', err);
+    }
+  }
+console.log('🔍 FINAL DEBUG - Real data:');
+console.log('score state:', score);
+console.log('answeredCorrectly full array:', answeredCorrectly);
+console.log('True count in array:', answeredCorrectly.filter(Boolean).length);
+console.log('Questions count:', quiz.questions.length);
     fetchLeaderboard(); 
+    const history = await fetchResultsFromDb();
+  setDbHistory(history);
   };
 
   const handleWhatsAppShare = () => {
@@ -527,20 +620,31 @@ ${analysis.message} 🚀 #SignLanguage`;
             {/* ✅ FIXED HISTORY + STEPS */}
             <div className="compact-section">
               <div className="history-section">
-                <h4>📈 Recent Attempts</h4>
-                <div className="history-list">
-                  {getRecentHistory(3).length > 0 ? (
-                    getRecentHistory(3).map((result) => (
-                      <div key={result.id} className={`history-item ${result.percentage >= 80 ? 'excellent' : result.percentage >= 60 ? 'good' : 'needs-work'}`}>
-                        <span>{result.completedAt}</span>
-                        <span><b>{result.score}/{result.total}</b></span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="no-history">No attempts yet. Take a quiz! 🎯</div>
-                  )}
-                </div>
-              </div>
+  <h4>📈 Recent Attempts</h4>
+  <div className="history-list">
+    {dbHistory.length > 0 ? (
+      dbHistory.map((result) => (
+        <div
+          key={result.id}
+          className={`history-item ${
+            result.percentage >= 80
+              ? 'excellent'
+              : result.percentage >= 60
+              ? 'good'
+              : 'needs-work'
+          }`}
+        >
+          <span>{result.completedAt}</span>
+          <span>
+            <b>{result.score}/{result.total}</b>
+          </span>
+        </div>
+      ))
+    ) : (
+      <div className="no-history">No attempts yet. Take a quiz! 🎯</div>
+    )}
+  </div>
+</div>
 
               <div className="next-steps-section">
                 <h4>🚀 Next Steps</h4>
